@@ -1,17 +1,25 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { GraphClient } from '../graph/graph.client';
 import { UserSyncService } from '../user-sync/user-sync.service';
 import { AgentService } from '../agent/agent.service';
+import OpenAI from 'openai';
 const logger = new Logger('SchedulingService');
 
 @Injectable()
 export class SchedulingService {
+  private openai: OpenAI;
+
   constructor(
-    private graph: GraphClient,
-    private userSync: UserSyncService,
-    private agent: AgentService,
     @Inject('PRISMA') private prisma: any,
-  ) { }
+    private graph: GraphClient,
+    private agent: AgentService,
+    private userSync: UserSyncService,
+  ) {
+    // Initialize OpenAI client
+    this.openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
 
   private extractSlots(findResult: any) {
     return (findResult?.meetingTimeSuggestions || []).map((s: any) => ({
@@ -174,49 +182,175 @@ export class SchedulingService {
   }
 
   async scheduleMeeting(dto: any) {
-    // Use organizer from request, or fetch from Microsoft Graph API
+    // Use organizer from request (signed-in user from JWT token)
+    // If not provided, fetch from Microsoft Graph API as fallback
     let organizer = dto.organizer;
 
     if (!organizer) {
-      // Dynamically fetch the authenticated user's email from Graph API
+      // Fallback: Dynamically fetch the authenticated user's email from Graph API
       organizer = await this.graph.getAuthenticatedUserEmail();
-      logger.log(`Using authenticated user as organizer: ${organizer}`);
+      logger.log(`No organizer provided, using Graph API fallback: ${organizer}`);
+    } else {
+      logger.log(`Using signed-in user as organizer: ${organizer}`);
     }
 
-    const { attendees, start, end, createIfFree = true } = dto;
+    const { attendees, start, end, subject, createIfFree } = dto;
 
-    // Pass organizer to suggestSlots
-    const ranked = await this.suggestSlots({ ...dto, organizer });
-    if (!ranked || !ranked.length) return { message: 'No suggestions available', suggestions: [] };
-    const best = ranked[0];
-    if (!createIfFree) return { suggestions: ranked };
+    await this.userSync.ensureUserInPrisma(this.prisma, organizer);
 
-    // Separate internal and external attendees for logging
+    // Separate internal and external attendees
     const { internal, external } = this.categorizeAttendees(attendees, organizer);
 
+    logger.log(`Internal attendees: ${internal.length}, External attendees: ${external.length}`);
+
     if (external.length > 0) {
-      logger.log(`Creating meeting with ${external.length} external attendee(s): ${external.map(a => a.emailAddress?.address || a).join(', ')}`);
+      logger.log(`External users detected: ${external.map(a => a.emailAddress?.address || a).join(', ')}`);
+      logger.log('Note: External users will receive invitations but availability cannot be checked');
     }
 
     // Create meeting with ALL attendees (both internal and external)
-    // External users will receive email invitations
+    // Use subject from payload, or default to "Meeting"
+    const meetingSubject = subject || 'Meeting';
+
     const payload = {
-      subject: `Meeting (Rank ${best.rank})`,
-      body: { contentType: 'HTML', content: `<p>Meeting scheduled via Agentic Scheduler.</p><p>Reason: ${best.reason}</p>${external.length > 0 ? `<p><strong>Note:</strong> This meeting includes ${external.length} external attendee(s).</p>` : ''}` },
-      start: { dateTime: best.start, timeZone: 'UTC' },
-      end: { dateTime: best.end, timeZone: 'UTC' },
+      subject: meetingSubject,
+      body: {
+        contentType: 'HTML',
+        content: `<p>Meeting scheduled via Agentic Scheduler.</p>`
+      },
+      start: { dateTime: start, timeZone: 'UTC' },
+      end: { dateTime: end, timeZone: 'UTC' },
       attendees, // Include ALL attendees (internal + external)
     };
+
     const created = await this.graph.createEventForUser(organizer, payload);
     const organizerRecord = await this.userSync.ensureUserInPrisma(this.prisma, organizer);
-    await this.prisma.meeting.create({
-      data: { subject: payload.subject, start: new Date(best.start), end: new Date(best.end), organizerId: organizerRecord.id }
+
+    // Log the meeting
+    const meeting = await this.prisma.meeting.create({
+      data: {
+        subject: meetingSubject,
+        start: new Date(start),
+        end: new Date(end),
+        organizerId: organizerRecord.id,
+      },
     });
+
+    if (external.length > 0) {
+      logger.log(`Meeting created with ${external.length} external attendee(s): ${external.map(a => a.emailAddress?.address).join(', ')}`);
+    }
+
     return {
+      message: 'Meeting scheduled',
       createdEvent: created,
-      chosen: best,
-      suggestions: ranked,
       externalAttendees: external.length > 0 ? external.map(a => a.emailAddress?.address || a) : undefined
     };
+  }
+
+  async parseNaturalLanguage(input: string, organizer?: string): Promise<any> {
+    try {
+      const currentTime = new Date();
+      const istTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+
+      const systemPrompt = `You are a meeting scheduler assistant. Parse the user's natural language input and extract meeting details.
+Current date and time in IST: ${istTime.toISOString()}
+Current date: ${istTime.toISOString().split('T')[0]}
+
+Extract the following information:
+1. subject: Meeting title/subject
+2. attendees: Array of email addresses
+3. startTime: ISO 8601 format in UTC (convert from IST if time is mentioned)
+4. endTime: ISO 8601 format in UTC
+5. duration: Duration in minutes (if specified)
+
+Important timezone rules:
+- All times mentioned are in IST (India Standard Time, UTC+5:30)
+- Convert IST to UTC for startTime and endTime
+- "today" means ${istTime.toISOString().split('T')[0]}
+- "tomorrow" means ${new Date(istTime.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+
+Return ONLY a JSON object with these fields. If duration is specified but not end time, calculate endTime. If end time is specified but not duration, calculate duration.`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: input }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+      });
+
+      const parsed = JSON.parse(completion.choices[0].message.content || '{}');
+
+      // Get organizer email
+      if (!organizer) {
+        organizer = await this.graph.getAuthenticatedUserEmail();
+      }
+
+      // Categorize attendees
+      const attendeeObjects = parsed.attendees.map((email: string) => ({
+        emailAddress: { address: email }
+      }));
+      const { internal, external } = this.categorizeAttendees(attendeeObjects, organizer);
+
+      // Check availability for internal users
+      let availabilityStatus: any = {};
+      let isSlotBusy = false;
+
+      if (internal.length > 0) {
+        try {
+          const scheduleResponse = await this.graph.getSchedule(
+            organizer,
+            internal.map(a => a.emailAddress.address),
+            parsed.startTime,
+            parsed.endTime
+          );
+
+          // Parse schedule response to check if anyone is busy
+          logger.log('📅 Schedule API Response:', JSON.stringify(scheduleResponse, null, 2));
+
+          scheduleResponse.value?.forEach((schedule: any) => {
+            const email = schedule.scheduleId;
+            const isBusy = schedule.scheduleItems?.some((item: any) =>
+              item.status === 'busy' || item.status === 'tentative'
+            );
+            availabilityStatus[email] = isBusy ? 'busy' : 'free';
+            logger.log(`👤 ${email}: ${isBusy ? '✗ Busy' : '✓ Free'} (Items: ${schedule.scheduleItems?.length || 0})`);
+            if (isBusy) isSlotBusy = true;
+          });
+
+          logger.log('📊 Final availability status:', availabilityStatus);
+          logger.log('⚠️ Is slot busy:', isSlotBusy);
+        } catch (error) {
+          logger.warn('Failed to check availability:', error);
+        }
+      }
+
+      logger.log('📤 Returning parsed details with availability:', {
+        internalCount: internal.length,
+        externalCount: external.length,
+        availabilityStatus,
+        isSlotBusy
+      });
+
+      return {
+        subject: parsed.subject || 'Meeting',
+        attendees: parsed.attendees || [],
+        startTime: parsed.startTime,
+        endTime: parsed.endTime,
+        duration: parsed.duration,
+        confidence: 0.9,
+        parsedFrom: input,
+        internalAttendees: internal.map(a => a.emailAddress.address),
+        externalAttendees: external.map(a => a.emailAddress.address),
+        availabilityStatus,
+        isSlotBusy,
+        hasExternalAttendees: external.length > 0,
+      };
+    } catch (error) {
+      logger.error('Error parsing natural language:', error);
+      throw new Error('Failed to parse meeting details from input');
+    }
   }
 }

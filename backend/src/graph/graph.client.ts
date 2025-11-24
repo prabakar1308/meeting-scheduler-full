@@ -93,6 +93,28 @@ export class GraphClient {
     return resp.data;
   }
 
+  async getSchedule(organizer: string, attendees: string[], startTime: string, endTime: string) {
+    const headers = await this.withAuthHeaders();
+    const url = `/users/${encodeURIComponent(organizer)}/calendar/getSchedule`;
+    const payload = {
+      schedules: attendees,
+      startTime: {
+        dateTime: startTime,
+        timeZone: 'UTC'
+      },
+      endTime: {
+        dateTime: endTime,
+        timeZone: 'UTC'
+      },
+      availabilityViewInterval: 60
+    };
+
+    const res = await this.requestWithRetry(() =>
+      this.client.post(url, payload, { headers })
+    );
+    return res.data;
+  }
+
   async createEventForUser(userPrincipalName: string, eventPayload: any) {
     const headers = await this.withAuthHeaders();
     const resp = await this.requestWithRetry(() => this.client.post(`/users/${encodeURIComponent(userPrincipalName)}/events`, eventPayload, { headers }));

@@ -13,8 +13,10 @@ const apiClient = axios.create({
 export const setAuthToken = (token: string | null) => {
     if (token) {
         apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        console.log('✅ API Client: Authorization header set with Bearer token');
     } else {
         delete apiClient.defaults.headers.common['Authorization'];
+        console.log('🚫 API Client: Authorization header removed');
     }
 };
 
@@ -41,17 +43,26 @@ export interface SuggestMeetingsParams {
 }
 
 export interface ScheduleMeetingParams extends SuggestMeetingsParams {
+    subject?: string;
+    organizer?: string;
     createIfFree?: boolean;
 }
 
 export const api = {
-    async suggestMeetings(params: SuggestMeetingsParams): Promise<MeetingSuggestion[]> {
+    suggestMeetings: async (params: SuggestMeetingsParams): Promise<MeetingSuggestion[]> => {
         const response = await apiClient.post('/scheduling/suggest', params);
         return response.data;
     },
 
-    async scheduleMeeting(params: ScheduleMeetingParams) {
+    scheduleMeeting: async (params: ScheduleMeetingParams) => {
         const response = await apiClient.post('/scheduling/schedule', params);
+        return response.data;
+    },
+
+    parseNaturalLanguage: async (input: string) => {
+        const response = await apiClient.post('/scheduling/parse-natural-language', {
+            naturalLanguageInput: input
+        });
         return response.data;
     },
 };

@@ -4,11 +4,11 @@ import { SuggestRequestDTO, ScheduleRequestDTO } from './types';
 import { OptionalAzureADGuard } from '../auth/optional-azure-ad.guard';
 
 @Controller('scheduling')
-@UseGuards(OptionalAzureADGuard) // Optional authentication - works with or without token
 export class SchedulingController {
   constructor(private svc: SchedulingService) { }
 
   @Post('suggest')
+  @UseGuards(OptionalAzureADGuard)
   async suggest(@Body() dto: SuggestRequestDTO, @Request() req: any) {
     // If user is authenticated, use their email from JWT token
     // Otherwise, system will auto-detect from Graph API
@@ -17,10 +17,24 @@ export class SchedulingController {
   }
 
   @Post('schedule')
+  @UseGuards(OptionalAzureADGuard)
   async schedule(@Body() dto: ScheduleRequestDTO, @Request() req: any) {
     // If user is authenticated, use their email from JWT token
     // Otherwise, system will auto-detect from Graph API
     const userEmail = req.user?.email;
-    return this.svc.scheduleMeeting({ ...dto, organizer: userEmail || dto.organizer });
+    console.log('🔐 Authenticated user email from JWT:', userEmail);
+    console.log('📧 Request body organizer:', dto.organizer);
+    if (userEmail) {
+      dto.organizer = userEmail;
+      console.log('✅ Set organizer to signed-in user:', dto.organizer);
+    }
+    return this.svc.scheduleMeeting(dto);
+  }
+
+  @Post('parse-natural-language')
+  @UseGuards(OptionalAzureADGuard)
+  async parseNaturalLanguage(@Body() dto: { naturalLanguageInput: string }, @Request() req: any) {
+    const userEmail = req.user?.email;
+    return this.svc.parseNaturalLanguage(dto.naturalLanguageInput, userEmail);
   }
 }
