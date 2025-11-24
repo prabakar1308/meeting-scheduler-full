@@ -1,6 +1,24 @@
 {
   "name": "meeting-scheduler-frontend",
   "private": true,
-  "scripts": { "dev": "next dev" },
-  "dependencies": { "next": "14.0.0", "react": "18.2.0", "react-dom": "18.2.0", "swr": "^2.1.0", "zustand": "^4.4.0" }
+  "scripts": {
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "^4.26.2",
+    "@azure/msal-react": "^3.0.22",
+    "axios": "^1.13.2",
+    "date-fns": "^4.1.0",
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "swr": "^2.1.0",
+    "zustand": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
 }

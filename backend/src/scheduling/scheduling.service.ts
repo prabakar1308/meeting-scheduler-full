@@ -11,7 +11,7 @@ export class SchedulingService {
     private userSync: UserSyncService,
     private agent: AgentService,
     @Inject('PRISMA') private prisma: any,
-  ) {}
+  ) { }
 
   private extractSlots(findResult: any) {
     return (findResult?.meetingTimeSuggestions || []).map((s: any) => ({
@@ -22,7 +22,16 @@ export class SchedulingService {
   }
 
   async suggestSlots(dto: any) {
-    const { organizer, attendees, start, end } = dto;
+    // Use organizer from request, or fetch from Microsoft Graph API
+    let organizer = dto.organizer;
+
+    if (!organizer) {
+      // Dynamically fetch the authenticated user's email from Graph API
+      organizer = await this.graph.getAuthenticatedUserEmail();
+      logger.log(`Using authenticated user as organizer: ${organizer}`);
+    }
+
+    const { attendees, start, end } = dto;
     await this.userSync.ensureUserInPrisma(this.prisma, organizer);
     const findRes = await this.graph.findMeetingTimes(organizer, attendees, {
       attendees,
@@ -38,8 +47,19 @@ export class SchedulingService {
   }
 
   async scheduleMeeting(dto: any) {
-    const { organizer, attendees, start, end, createIfFree = true } = dto;
-    const ranked = await this.suggestSlots(dto);
+    // Use organizer from request, or fetch from Microsoft Graph API
+    let organizer = dto.organizer;
+
+    if (!organizer) {
+      // Dynamically fetch the authenticated user's email from Graph API
+      organizer = await this.graph.getAuthenticatedUserEmail();
+      logger.log(`Using authenticated user as organizer: ${organizer}`);
+    }
+
+    const { attendees, start, end, createIfFree = true } = dto;
+
+    // Pass organizer to suggestSlots
+    const ranked = await this.suggestSlots({ ...dto, organizer });
     if (!ranked || !ranked.length) return { message: 'No suggestions available', suggestions: [] };
     const best = ranked[0];
     if (!createIfFree) return { suggestions: ranked };
@@ -49,7 +69,6 @@ export class SchedulingService {
       start: { dateTime: best.start, timeZone: 'UTC' },
       end: { dateTime: best.end, timeZone: 'UTC' },
       attendees,
-      isOnlineMeeting: true,
     };
     const created = await this.graph.createEventForUser(organizer, payload);
     const organizerRecord = await this.userSync.ensureUserInPrisma(this.prisma, organizer);

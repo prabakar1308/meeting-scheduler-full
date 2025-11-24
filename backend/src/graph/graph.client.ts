@@ -44,7 +44,7 @@ export class GraphClient {
             if (!isNaN(dt)) waitMs = Math.max(0, dt - Date.now());
           }
         }
-        if ([429,503].includes(status)) {
+        if ([429, 503].includes(status)) {
           logger.warn(`Graph throttled (status=${status}). retry #${attempt} after ${waitMs}ms`);
           await this.sleep(waitMs);
           continue;
@@ -97,5 +97,44 @@ export class GraphClient {
     const headers = await this.withAuthHeaders();
     const resp = await this.requestWithRetry(() => this.client.post(`/users/${encodeURIComponent(userPrincipalName)}/events`, eventPayload, { headers }));
     return resp.data;
+  }
+
+  /**
+   * Get the authenticated user's email from Microsoft Graph.
+   * This uses the app's credentials to determine the default organizer.
+   * Falls back to environment variable if Graph call fails.
+   */
+  async getAuthenticatedUserEmail(): Promise<string> {
+    try {
+      // Try to get the first user from the organization as the default organizer
+      // In a real scenario, you might want to configure a specific user ID
+      const defaultUserId = process.env.DEFAULT_ORGANIZER_USER_ID;
+
+      if (defaultUserId) {
+        const user = await this.getUserById(defaultUserId);
+        return user.mail || user.userPrincipalName;
+      }
+
+      // Fallback: get the first admin user or any user
+      const users = await this.listUsers(1);
+      if (users && users.length > 0) {
+        const user = users[0];
+        logger.log(`Using first available user as organizer: ${user.mail || user.userPrincipalName}`);
+        return user.mail || user.userPrincipalName;
+      }
+
+      throw new Error('No users found in organization');
+    } catch (error) {
+      logger.error('Failed to fetch authenticated user from Graph API:', error);
+
+      // Fallback to environment variable
+      const fallbackEmail = process.env.DEFAULT_ORGANIZER_EMAIL;
+      if (fallbackEmail) {
+        logger.warn(`Using fallback organizer email from env: ${fallbackEmail}`);
+        return fallbackEmail;
+      }
+
+      throw new Error('Could not determine organizer email. Set DEFAULT_ORGANIZER_EMAIL or DEFAULT_ORGANIZER_USER_ID in .env');
+    }
   }
 }

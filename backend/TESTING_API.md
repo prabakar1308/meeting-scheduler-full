@@ -146,7 +146,7 @@ http://localhost:4000/scheduling/suggest
 **Body (JSON):**
 ```json
 {
-  "organizer": "user@example.com",
+  "organizer": "prabakar1308@6tjp7n.onmicrosoft.com",
   "attendees": [
     {
       "emailAddress": {
@@ -207,7 +207,7 @@ http://localhost:4000/scheduling/schedule
 **Body (JSON):**
 ```json
 {
-  "organizer": "user@example.com",
+  "organizer": "prabakar1308@6tjp7n.onmicrosoft.com",
   "attendees": [
     {
       "emailAddress": {
@@ -304,7 +304,7 @@ Save this as a Thunder Client collection for easy testing:
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"organizer\": \"user@example.com\",\n  \"attendees\": [\n    {\n      \"emailAddress\": {\n        \"address\": \"alice@example.com\",\n        \"name\": \"Alice\"\n      },\n      \"type\": \"Required\"\n    }\n  ],\n  \"start\": \"2025-11-25T09:00:00Z\",\n  \"end\": \"2025-11-25T17:00:00Z\"\n}"
+        "raw": "{\n  \"organizer\": \"prabakar1308@6tjp7n.onmicrosoft.com\",\n  \"attendees\": [\n    {\n      \"emailAddress\": {\n        \"address\": \"alice@example.com\",\n        \"name\": \"Alice\"\n      },\n      \"type\": \"Required\"\n    }\n  ],\n  \"start\": \"2025-11-25T09:00:00Z\",\n  \"end\": \"2025-11-25T17:00:00Z\"\n}"
       }
     },
     {
@@ -319,7 +319,7 @@ Save this as a Thunder Client collection for easy testing:
       ],
       "body": {
         "type": "json",
-        "raw": "{\n  \"organizer\": \"user@example.com\",\n  \"attendees\": [\n    {\n      \"emailAddress\": {\n        \"address\": \"alice@example.com\",\n        \"name\": \"Alice\"\n      },\n      \"type\": \"Required\"\n    }\n  ],\n  \"start\": \"2025-11-25T14:00:00Z\",\n  \"end\": \"2025-11-25T15:00:00Z\"\n}"
+        "raw": "{\n  \"organizer\": \"prabakar1308@6tjp7n.onmicrosoft.com\",\n  \"attendees\": [\n    {\n      \"emailAddress\": {\n        \"address\": \"alice@example.com\",\n        \"name\": \"Alice\"\n      },\n      \"type\": \"Required\"\n    }\n  ],\n  \"start\": \"2025-11-25T14:00:00Z\",\n  \"end\": \"2025-11-25T15:00:00Z\"\n}"
       }
     }
   ]
