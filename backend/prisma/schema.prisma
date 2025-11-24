@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  azureId      String    @unique
+  displayName  String?
+  email        String?
+
+  // One-to-many relation to Meeting
+  meetings     Meeting[] @relation("UserMeetings")
+
+  createdAt    DateTime  @default(now())
+}
+
+model Meeting {
+  id          Int      @id @default(autoincrement())
+  subject     String
+  start       DateTime
+  end         DateTime
+
+  // Foreign key to User
+  organizerId Int
+  organizer   User     @relation("UserMeetings", fields: [organizerId], references: [id])
+
+  createdAt   DateTime @default(now())
+}
