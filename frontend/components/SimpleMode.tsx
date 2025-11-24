@@ -16,6 +16,17 @@ interface ParsedDetails {
     availabilityStatus: { [email: string]: 'free' | 'busy' };
     isSlotBusy: boolean;
     hasExternalAttendees: boolean;
+    alternativeSlots?: Array<{
+        rank: number;
+        start: string;
+        end: string;
+        confidence: number;
+        reason: string;
+        attendeeAvailability?: Array<{
+            email: string;
+            availability: string;
+        }>;
+    }>;
 }
 
 interface SimpleModeProps {
@@ -263,6 +274,81 @@ export default function SimpleMode({ onError, onSuccess }: SimpleModeProps) {
                                 fontWeight: 'bold'
                             }}>
                                 ⚠️ Warning: Some internal attendees are busy during this time slot
+                            </div>
+                        )}
+
+                        {parsedDetails.alternativeSlots && parsedDetails.alternativeSlots.length > 0 && (
+                            <div style={{ marginTop: '1rem' }}>
+                                <h4 style={{ margin: '0.5rem 0', color: '#2d3748', fontSize: '1rem' }}>
+                                    🕐 Alternative Time Slots
+                                </h4>
+                                <div style={{ fontSize: '0.75rem', color: '#718096', marginBottom: '0.5rem' }}>
+                                    Here are some available times when everyone is free:
+                                </div>
+                                {parsedDetails.alternativeSlots.map((slot) => (
+                                    <div
+                                        key={slot.rank}
+                                        style={{
+                                            padding: '0.75rem',
+                                            background: '#f0fff4',
+                                            border: '1px solid #48bb78',
+                                            borderRadius: '6px',
+                                            marginBottom: '0.5rem',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                        onClick={() => {
+                                            if (window.confirm(`Switch to this time slot?\n\n${new Date(slot.start).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })} - ${new Date(slot.end).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short' })}`)) {
+                                                setParsedDetails({
+                                                    ...parsedDetails,
+                                                    startTime: slot.start,
+                                                    endTime: slot.end,
+                                                    isSlotBusy: false,
+                                                    alternativeSlots: []
+                                                });
+                                            }
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = '#c6f6d5';
+                                            e.currentTarget.style.transform = 'translateX(4px)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = '#f0fff4';
+                                            e.currentTarget.style.transform = 'translateX(0)';
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 'bold', color: '#22543d', fontSize: '0.85rem' }}>
+                                                    Option {slot.rank} - {slot.confidence}% match
+                                                </div>
+                                                <div style={{ color: '#4a5568', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                                                    📅 {new Date(slot.start).toLocaleString('en-IN', {
+                                                        timeZone: 'Asia/Kolkata',
+                                                        dateStyle: 'medium',
+                                                        timeStyle: 'short'
+                                                    })} - {new Date(slot.end).toLocaleString('en-IN', {
+                                                        timeZone: 'Asia/Kolkata',
+                                                        timeStyle: 'short'
+                                                    })} IST
+                                                </div>
+                                                <div style={{ color: '#718096', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                                                    {slot.reason}
+                                                </div>
+                                            </div>
+                                            <div style={{
+                                                fontSize: '0.75rem',
+                                                padding: '0.25rem 0.5rem',
+                                                background: '#48bb78',
+                                                color: 'white',
+                                                borderRadius: '4px',
+                                                fontWeight: 'bold'
+                                            }}>
+                                                Click to use
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
