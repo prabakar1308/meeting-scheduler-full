@@ -5,7 +5,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 
 // Define the intent schema
 export const intentSchema = z.object({
-    intent: z.enum(['schedule_new', 'modify_existing', 'ask_question', 'clarify', 'cancel']).describe('The user\'s primary intent'),
+    intent: z.enum(['schedule_new', 'modify_existing', 'ask_question', 'clarify', 'cancel', 'confirm', 'select_slot']).describe('The user\'s primary intent'),
     confidence: z.number().min(0).max(1).describe('Confidence score for the classification'),
     context: z.string().optional().describe('Additional context about the intent'),
     extractedData: z.object({
@@ -14,6 +14,7 @@ export const intentSchema = z.object({
         date: z.string().optional(),
         time: z.string().optional(),
         duration: z.number().optional(),
+        slotId: z.string().optional().describe('Slot ID or rank if selecting a slot'),
     }).optional().describe('Any meeting data that could be extracted from the input'),
 });
 
@@ -44,6 +45,8 @@ Analyze the user's input and classify their intent into one of these categories:
 - ask_question: User is asking a question about scheduling or availability
 - clarify: User is providing additional information or clarification
 - cancel: User wants to cancel a meeting or stop the process
+- confirm: User is confirming an action (e.g., "Yes", "Go ahead", "Looks good")
+- select_slot: User is selecting a time slot (e.g., "The first one", "Slot 2", "10am works")
 
 Previous conversation context:
 {history}
@@ -52,7 +55,8 @@ Current user input: {input}
 
 {format_instructions}
 
-Provide a confidence score (0-1) and extract any meeting-related data you can identify.`,
+Provide a confidence score (0-1) and extract any meeting-related data you can identify.
+If the user is selecting a slot, try to extract the slot ID or rank into extractedData.slotId.`,
             inputVariables: ['input', 'history'],
             partialVariables: { format_instructions: formatInstructions },
         });

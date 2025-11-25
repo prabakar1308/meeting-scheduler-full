@@ -9,7 +9,7 @@ import { HttpModule } from '@nestjs/axios';
 import { LangchainModule } from '../langchain/langchain.module';
 
 @Module({
-  imports: [HttpModule, PrismaModule, GraphModule, AuthModule, AgentModule, LangchainModule],
+  imports: [HttpModule, PrismaModule, GraphModule, AuthModule, AgentModule],
   controllers: [SchedulingController],
   providers: [SchedulingService],
   exports: [SchedulingService],

@@ -65,6 +65,14 @@ export const api = {
         });
         return response.data;
     },
+
+    sendChatMessage: async (sessionId: string, message: string) => {
+        const response = await apiClient.post('/chat/message', {
+            sessionId,
+            message
+        });
+        return response.data;
+    },
 };
 
 export default apiClient;

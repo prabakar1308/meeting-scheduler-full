@@ -225,6 +225,263 @@ export class SchedulingService {
     };
   }
 
+  async checkAvailability(
+    organizer: string,
+    startTime: Date,
+    endTime: Date,
+    internalAttendees: string[]
+  ): Promise<{
+    isSlotBusy: boolean;
+    availabilityStatus: Record<string, string>;
+    alternativeSlots: any[];
+  }> {
+    let availabilityStatus: any = {};
+    let isSlotBusy = false;
+    let alternativeSlots: any[] = [];
+
+    if (internalAttendees.length > 0) {
+      try {
+        const scheduleResponse = await this.graph.getSchedule(
+          organizer,
+          internalAttendees,
+          startTime.toISOString(),
+          endTime.toISOString()
+        );
+
+        // Parse schedule response to check if anyone is busy
+        logger.log('📅 Schedule API Response:', JSON.stringify(scheduleResponse, null, 2));
+
+        const requestedStart = startTime;
+        const requestedEnd = endTime;
+
+        logger.log(`🕐 Requested time slot (UTC): ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
+
+        scheduleResponse.value?.forEach((schedule: any) => {
+          const email = schedule.scheduleId;
+
+          logger.log(`\n👤 Checking availability for: ${email}`);
+          logger.log(`   Total schedule items: ${schedule.scheduleItems?.length || 0}`);
+
+          // Check if any schedule item overlaps with the requested time slot
+          const isBusy = schedule.scheduleItems?.some((item: any) => {
+            logger.log(`   📅 Item: ${item.start.dateTime} - ${item.end.dateTime} (${item.status})`);
+
+            if (item.status !== 'busy' && item.status !== 'tentative') {
+              logger.log(`      ✓ Skipping (status: ${item.status})`);
+              return false;
+            }
+
+            // Check for time overlap
+            // Ensure we're working with UTC times
+            const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
+            const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
+
+            logger.log(`      Item Start (UTC): ${itemStart.toISOString()}`);
+            logger.log(`      Item End (UTC):   ${itemEnd.toISOString()}`);
+            logger.log(`      Requested Start:  ${requestedStart.toISOString()}`);
+            logger.log(`      Requested End:    ${requestedEnd.toISOString()}`);
+
+            // Two time ranges overlap if: start1 < end2 AND start2 < end1
+            const overlaps = requestedStart < itemEnd && itemStart < requestedEnd;
+
+            logger.log(`      Overlap check: ${requestedStart.toISOString()} < ${itemEnd.toISOString()} = ${requestedStart < itemEnd}`);
+            logger.log(`                     ${itemStart.toISOString()} < ${requestedEnd.toISOString()} = ${itemStart < requestedEnd}`);
+            logger.log(`      Result: ${overlaps ? '⚠️ CONFLICT!' : '✓ No conflict'}`);
+
+            return overlaps;
+          });
+
+          availabilityStatus[email] = isBusy ? 'busy' : 'free';
+          logger.log(`\n   Final status for ${email}: ${isBusy ? '✗ BUSY' : '✓ FREE'}`);
+          if (isBusy) isSlotBusy = true;
+        });
+
+        logger.log('\n📊 Final availability status:', availabilityStatus);
+        logger.log('⚠️ Is slot busy:', isSlotBusy);
+
+        // If slot is busy, find alternative time slots
+        if (isSlotBusy) {
+          logger.log('🔍 Finding alternative time slots...');
+
+          // Calculate duration from parsed times
+          const durationMinutes = (endTime.getTime() - startTime.getTime()) / (1000 * 60);
+
+          // Search for slots starting from current time if requested date is today or past
+          const searchStartDate = new Date(startTime);
+          const now = new Date();
+
+          // If the requested date is today or in the past, start from current time
+          // Otherwise, start from beginning of the requested day
+          if (searchStartDate <= now) {
+            searchStartDate.setTime(now.getTime());
+          } else {
+            searchStartDate.setHours(0, 0, 0, 0);
+          }
+
+          const searchEndDate = new Date(searchStartDate);
+          searchEndDate.setDate(searchEndDate.getDate() + 7);
+
+          try {
+            const findRes = await this.graph.findMeetingTimes(organizer, internalAttendees.map(email => ({ emailAddress: { address: email } })), {
+              attendees: internalAttendees.map(email => ({ emailAddress: { address: email } })),
+              timeConstraint: {
+                timeslots: [{
+                  start: { dateTime: searchStartDate.toISOString(), timeZone: 'UTC' },
+                  end: { dateTime: searchEndDate.toISOString(), timeZone: 'UTC' }
+                }],
+                activityDomain: 'unrestricted' // Allow suggestions throughout the entire day, not just work hours
+              },
+              meetingDuration: `PT${durationMinutes}M`,
+              maxCandidates: 50, // Request many more to ensure we have enough after filtering
+              minimumAttendeePercentage: 100, // All attendees must be available
+              isOrganizerOptional: false,
+            });
+
+            logger.log(`📊 Graph API returned ${findRes.meetingTimeSuggestions?.length || 0} suggestions`);
+
+            // logger.log(findRes.meetingTimeSuggestions);
+
+            // Filter out slots that are in the past and outside business hours
+            const now = new Date();
+
+            // Helper function to check if a slot overlaps with any busy calendar event
+            const hasConflict = (slotStartTime: Date, slotEndTime: Date): boolean => {
+              return scheduleResponse.value?.some((schedule: any) => {
+                return schedule.scheduleItems?.some((item: any) => {
+                  if (item.status !== 'busy' && item.status !== 'tentative') {
+                    return false;
+                  }
+
+                  const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
+                  const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
+
+                  // Two time ranges overlap if: start1 < end2 AND start2 < end1
+                  const overlaps = slotStartTime < itemEnd && itemStart < slotEndTime;
+
+                  if (overlaps) {
+                    logger.log(`   ⚠️ Calendar conflict for ${schedule.scheduleId}: ${itemStart.toISOString()} - ${itemEnd.toISOString()}`);
+                  }
+
+                  return overlaps;
+                });
+              });
+            };
+
+
+            const businessHoursSlots = (findRes.meetingTimeSuggestions || [])
+              .filter((slot: any) => {
+                const slotStart = new Date(slot.meetingTimeSlot.start.dateTime);
+                const slotEnd = new Date(slot.meetingTimeSlot.end.dateTime);
+
+                // Filter out past times FIRST
+                if (slotStart < now) {
+                  logger.log(`⏭️ Skipping past slot: ${slotStart.toISOString()}`);
+                  return false;
+                }
+
+                // CRITICAL: Manually check for conflicts using actual calendar data
+                // Graph API's attendeeAvailability is unreliable with activityDomain: 'unrestricted'
+                if (hasConflict(slotStart, slotEnd)) {
+                  logger.log(`⏭️ Skipping slot with calendar conflict: ${slotStart.toISOString()} - ${slotEnd.toISOString()}`);
+                  return false;
+                }
+
+                // Convert UTC to IST (UTC+5:30) by adding offset milliseconds
+                // IST is UTC + 5 hours 30 minutes = 19800000 milliseconds
+                const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+                const istTime = new Date(slotStart.getTime() + istOffset);
+                const istHour = istTime.getUTCHours(); // Use getUTCHours() since we already added the offset
+
+                // Business hours: 9 AM to 6 PM IST (in 24-hour format)
+                const inBusinessHours = istHour >= 9 && istHour < 18;
+                if (!inBusinessHours) {
+                  logger.log(`⏭️ Skipping non-business hours slot: ${slotStart.toISOString()} (IST hour: ${istHour})`);
+                }
+                return inBusinessHours;
+              })
+              .map((slot: any) => {
+                const slotStart = new Date(slot.meetingTimeSlot.start.dateTime);
+                // Calculate time difference from requested slot (in minutes)
+                const timeDiff = Math.abs(slotStart.getTime() - startTime.getTime()) / (1000 * 60);
+                return {
+                  slot,
+                  timeDiff,
+                  slotStart
+                };
+              })
+              .sort((a: any, b: any) => {
+                // Calculate time difference in hours
+                const aHoursDiff = a.timeDiff / 60;
+                const bHoursDiff = b.timeDiff / 60;
+
+                // Check if same day
+                const sameDay = (date1: Date, date2: Date) =>
+                  date1.getUTCFullYear() === date2.getUTCFullYear() &&
+                  date1.getUTCMonth() === date2.getUTCMonth() &&
+                  date1.getUTCDate() === date2.getUTCDate();
+
+                const aIsSameDay = sameDay(a.slotStart, startTime);
+                const bIsSameDay = sameDay(b.slotStart, startTime);
+
+                // Priority 1: Slots within 3 hours (very close to requested time)
+                const aIsVeryClose = aHoursDiff <= 3;
+                const bIsVeryClose = bHoursDiff <= 3;
+
+                if (aIsVeryClose && !bIsVeryClose) return -1;
+                if (!aIsVeryClose && bIsVeryClose) return 1;
+
+                // Priority 2: Same day (but only if both are or aren't very close)
+                if (aIsSameDay && !bIsSameDay) return -1;
+                if (!aIsSameDay && bIsSameDay) return 1;
+
+                // Priority 3: Sort by time proximity
+                return a.timeDiff - b.timeDiff;
+              })
+              .slice(0, 5)
+              .map((item: any, index: number) => {
+                const slot = {
+                  rank: index + 1,
+                  start: item.slot.meetingTimeSlot.start.dateTime,
+                  end: item.slot.meetingTimeSlot.end.dateTime,
+                  confidence: item.slot.confidence,
+                  reason: item.slot.suggestionReason || 'Available time slot',
+                  attendeeAvailability: item.slot.attendeeAvailability?.map((a: any) => ({
+                    email: a.attendee?.emailAddress?.address,
+                    availability: a.availability
+                  }))
+                };
+
+                // Log the slot time in both UTC and IST for verification
+                const startDate = new Date(slot.start);
+                const istTime = startDate.toLocaleString('en-IN', {
+                  timeZone: 'Asia/Kolkata',
+                  dateStyle: 'medium',
+                  timeStyle: 'short'
+                });
+                logger.log(`   Slot ${slot.rank}: UTC ${slot.start} → IST ${istTime}`);
+
+                return slot;
+              });
+
+            logger.log(`📋 After filtering: ${businessHoursSlots.length} slots remaining (from ${findRes.meetingTimeSuggestions?.length || 0} total)`);
+            alternativeSlots = businessHoursSlots;
+            logger.log(`✅ Returning ${alternativeSlots.length} alternative slots (filtered for future times + business hours, sorted by proximity)`);
+          } catch (error) {
+            logger.warn('Failed to find alternative slots:', error);
+          }
+        }
+      } catch (error) {
+        logger.warn('Failed to check availability:', error);
+      }
+    }
+
+    return {
+      isSlotBusy,
+      availabilityStatus,
+      alternativeSlots
+    };
+  }
+
   async parseNaturalLanguage(input: string, organizer?: string): Promise<any> {
     try {
       const currentTime = new Date();
@@ -300,247 +557,12 @@ Return ONLY a JSON object with these fields. If duration is specified but not en
       const { internal, external } = this.categorizeAttendees(attendeeObjects, organizer);
 
       // Check availability for internal users
-      let availabilityStatus: any = {};
-      let isSlotBusy = false;
-      let alternativeSlots: any[] = [];
-
-      if (internal.length > 0) {
-        try {
-          const scheduleResponse = await this.graph.getSchedule(
-            organizer,
-            internal.map(a => a.emailAddress.address),
-            parsed.startTime,
-            parsed.endTime
-          );
-
-          // Parse schedule response to check if anyone is busy
-          logger.log('📅 Schedule API Response:', JSON.stringify(scheduleResponse, null, 2));
-
-          const requestedStart = new Date(parsed.startTime);
-          const requestedEnd = new Date(parsed.endTime);
-
-          logger.log(`🕐 Requested time slot (UTC): ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
-
-          scheduleResponse.value?.forEach((schedule: any) => {
-            const email = schedule.scheduleId;
-
-            logger.log(`\n👤 Checking availability for: ${email}`);
-            logger.log(`   Total schedule items: ${schedule.scheduleItems?.length || 0}`);
-
-            // Check if any schedule item overlaps with the requested time slot
-            const isBusy = schedule.scheduleItems?.some((item: any) => {
-              logger.log(`   📅 Item: ${item.start.dateTime} - ${item.end.dateTime} (${item.status})`);
-
-              if (item.status !== 'busy' && item.status !== 'tentative') {
-                logger.log(`      ✓ Skipping (status: ${item.status})`);
-                return false;
-              }
-
-              // Check for time overlap
-              // Ensure we're working with UTC times
-              const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
-              const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
-
-              logger.log(`      Item Start (UTC): ${itemStart.toISOString()}`);
-              logger.log(`      Item End (UTC):   ${itemEnd.toISOString()}`);
-              logger.log(`      Requested Start:  ${requestedStart.toISOString()}`);
-              logger.log(`      Requested End:    ${requestedEnd.toISOString()}`);
-
-              // Two time ranges overlap if: start1 < end2 AND start2 < end1
-              const overlaps = requestedStart < itemEnd && itemStart < requestedEnd;
-
-              logger.log(`      Overlap check: ${requestedStart.toISOString()} < ${itemEnd.toISOString()} = ${requestedStart < itemEnd}`);
-              logger.log(`                     ${itemStart.toISOString()} < ${requestedEnd.toISOString()} = ${itemStart < requestedEnd}`);
-              logger.log(`      Result: ${overlaps ? '⚠️ CONFLICT!' : '✓ No conflict'}`);
-
-              return overlaps;
-            });
-
-            availabilityStatus[email] = isBusy ? 'busy' : 'free';
-            logger.log(`\n   Final status for ${email}: ${isBusy ? '✗ BUSY' : '✓ FREE'}`);
-            if (isBusy) isSlotBusy = true;
-          });
-
-          logger.log('\n📊 Final availability status:', availabilityStatus);
-          logger.log('⚠️ Is slot busy:', isSlotBusy);
-
-          // If slot is busy, find alternative time slots
-          if (isSlotBusy) {
-            logger.log('🔍 Finding alternative time slots...');
-
-            // Calculate duration from parsed times
-            const startDate = new Date(parsed.startTime);
-            const endDate = new Date(parsed.endTime);
-            const durationMinutes = (endDate.getTime() - startDate.getTime()) / (1000 * 60);
-
-            // Search for slots starting from current time if requested date is today or past
-            const searchStartDate = new Date(startDate);
-            const now = new Date();
-
-            // If the requested date is today or in the past, start from current time
-            // Otherwise, start from beginning of the requested day
-            if (searchStartDate <= now) {
-              searchStartDate.setTime(now.getTime());
-            } else {
-              searchStartDate.setHours(0, 0, 0, 0);
-            }
-
-            const searchEndDate = new Date(searchStartDate);
-            searchEndDate.setDate(searchEndDate.getDate() + 7);
-
-            try {
-              const findRes = await this.graph.findMeetingTimes(organizer, internal, {
-                attendees: internal,
-                timeConstraint: {
-                  timeslots: [{
-                    start: { dateTime: searchStartDate.toISOString(), timeZone: 'UTC' },
-                    end: { dateTime: searchEndDate.toISOString(), timeZone: 'UTC' }
-                  }],
-                  activityDomain: 'unrestricted' // Allow suggestions throughout the entire day, not just work hours
-                },
-                meetingDuration: `PT${durationMinutes}M`,
-                maxCandidates: 50, // Request many more to ensure we have enough after filtering
-                minimumAttendeePercentage: 100, // All attendees must be available
-                isOrganizerOptional: false,
-              });
-
-              logger.log(`📊 Graph API returned ${findRes.meetingTimeSuggestions?.length || 0} suggestions`);
-
-              // logger.log(findRes.meetingTimeSuggestions);
-
-              // Filter out slots that are in the past and outside business hours
-              const now = new Date();
-
-              // Helper function to check if a slot overlaps with any busy calendar event
-              const hasConflict = (slotStartTime: Date, slotEndTime: Date): boolean => {
-                return scheduleResponse.value?.some((schedule: any) => {
-                  return schedule.scheduleItems?.some((item: any) => {
-                    if (item.status !== 'busy' && item.status !== 'tentative') {
-                      return false;
-                    }
-
-                    const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
-                    const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
-
-                    // Two time ranges overlap if: start1 < end2 AND start2 < end1
-                    const overlaps = slotStartTime < itemEnd && itemStart < slotEndTime;
-
-                    if (overlaps) {
-                      logger.log(`   ⚠️ Calendar conflict for ${schedule.scheduleId}: ${itemStart.toISOString()} - ${itemEnd.toISOString()}`);
-                    }
-
-                    return overlaps;
-                  });
-                });
-              };
-
-
-              const businessHoursSlots = (findRes.meetingTimeSuggestions || [])
-                .filter((slot: any) => {
-                  const slotStart = new Date(slot.meetingTimeSlot.start.dateTime);
-                  const slotEnd = new Date(slot.meetingTimeSlot.end.dateTime);
-
-                  // Filter out past times FIRST
-                  if (slotStart < now) {
-                    logger.log(`⏭️ Skipping past slot: ${slotStart.toISOString()}`);
-                    return false;
-                  }
-
-                  // CRITICAL: Manually check for conflicts using actual calendar data
-                  // Graph API's attendeeAvailability is unreliable with activityDomain: 'unrestricted'
-                  if (hasConflict(slotStart, slotEnd)) {
-                    logger.log(`⏭️ Skipping slot with calendar conflict: ${slotStart.toISOString()} - ${slotEnd.toISOString()}`);
-                    return false;
-                  }
-
-                  // Convert UTC to IST (UTC+5:30) by adding offset milliseconds
-                  // IST is UTC + 5 hours 30 minutes = 19800000 milliseconds
-                  const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
-                  const istTime = new Date(slotStart.getTime() + istOffset);
-                  const istHour = istTime.getUTCHours(); // Use getUTCHours() since we already added the offset
-
-                  // Business hours: 9 AM to 6 PM IST (in 24-hour format)
-                  const inBusinessHours = istHour >= 9 && istHour < 18;
-                  if (!inBusinessHours) {
-                    logger.log(`⏭️ Skipping non-business hours slot: ${slotStart.toISOString()} (IST hour: ${istHour})`);
-                  }
-                  return inBusinessHours;
-                })
-                .map((slot: any) => {
-                  const slotStart = new Date(slot.meetingTimeSlot.start.dateTime);
-                  // Calculate time difference from requested slot (in minutes)
-                  const timeDiff = Math.abs(slotStart.getTime() - startDate.getTime()) / (1000 * 60);
-                  return {
-                    slot,
-                    timeDiff,
-                    slotStart
-                  };
-                })
-                .sort((a: any, b: any) => {
-                  // Calculate time difference in hours
-                  const aHoursDiff = a.timeDiff / 60;
-                  const bHoursDiff = b.timeDiff / 60;
-
-                  // Check if same day
-                  const sameDay = (date1: Date, date2: Date) =>
-                    date1.getUTCFullYear() === date2.getUTCFullYear() &&
-                    date1.getUTCMonth() === date2.getUTCMonth() &&
-                    date1.getUTCDate() === date2.getUTCDate();
-
-                  const aIsSameDay = sameDay(a.slotStart, startDate);
-                  const bIsSameDay = sameDay(b.slotStart, startDate);
-
-                  // Priority 1: Slots within 3 hours (very close to requested time)
-                  const aIsVeryClose = aHoursDiff <= 3;
-                  const bIsVeryClose = bHoursDiff <= 3;
-
-                  if (aIsVeryClose && !bIsVeryClose) return -1;
-                  if (!aIsVeryClose && bIsVeryClose) return 1;
-
-                  // Priority 2: Same day (but only if both are or aren't very close)
-                  if (aIsSameDay && !bIsSameDay) return -1;
-                  if (!aIsSameDay && bIsSameDay) return 1;
-
-                  // Priority 3: Sort by time proximity
-                  return a.timeDiff - b.timeDiff;
-                })
-                .slice(0, 5)
-                .map((item: any, index: number) => {
-                  const slot = {
-                    rank: index + 1,
-                    start: item.slot.meetingTimeSlot.start.dateTime,
-                    end: item.slot.meetingTimeSlot.end.dateTime,
-                    confidence: item.slot.confidence,
-                    reason: item.slot.suggestionReason || 'Available time slot',
-                    attendeeAvailability: item.slot.attendeeAvailability?.map((a: any) => ({
-                      email: a.attendee?.emailAddress?.address,
-                      availability: a.availability
-                    }))
-                  };
-
-                  // Log the slot time in both UTC and IST for verification
-                  const startDate = new Date(slot.start);
-                  const istTime = startDate.toLocaleString('en-IN', {
-                    timeZone: 'Asia/Kolkata',
-                    dateStyle: 'medium',
-                    timeStyle: 'short'
-                  });
-                  logger.log(`   Slot ${slot.rank}: UTC ${slot.start} → IST ${istTime}`);
-
-                  return slot;
-                });
-
-              logger.log(`📋 After filtering: ${businessHoursSlots.length} slots remaining (from ${findRes.meetingTimeSuggestions?.length || 0} total)`);
-              alternativeSlots = businessHoursSlots;
-              logger.log(`✅ Returning ${alternativeSlots.length} alternative slots (filtered for future times + business hours, sorted by proximity)`);
-            } catch (error) {
-              logger.warn('Failed to find alternative slots:', error);
-            }
-          }
-        } catch (error) {
-          logger.warn('Failed to check availability:', error);
-        }
-      }
+      const { isSlotBusy, availabilityStatus, alternativeSlots } = await this.checkAvailability(
+        organizer,
+        parsedStartTime,
+        parsedEndTime,
+        internal.map(a => a.emailAddress.address)
+      );
 
       logger.log('📤 Returning parsed details with availability:', {
         internalCount: internal.length,

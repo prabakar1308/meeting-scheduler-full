@@ -45,6 +45,9 @@ export default function Layout({ children }: LayoutProps) {
                             <a href="/schedule" style={{ color: 'white', textDecoration: 'none', opacity: 0.9 }}>
                                 Schedule Meeting
                             </a>
+                            <a href="/chat" style={{ color: 'white', textDecoration: 'none', opacity: 0.9 }}>
+                                💬 Chat
+                            </a>
                         </div>
                     )}
                 </div>

@@ -40,21 +40,38 @@ export default function Home() {
                             <p style={{ color: '#718096', marginBottom: '2rem' }}>
                                 Ready to schedule your next meeting?
                             </p>
-                            <a
-                                href="/schedule"
-                                style={{
-                                    display: 'inline-block',
-                                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                                    color: 'white',
-                                    padding: '1rem 2rem',
-                                    borderRadius: '8px',
-                                    textDecoration: 'none',
-                                    fontWeight: 'bold',
-                                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-                                }}
-                            >
-                                Schedule a Meeting →
-                            </a>
+                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                <a
+                                    href="/schedule"
+                                    style={{
+                                        display: 'inline-block',
+                                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                        color: 'white',
+                                        padding: '1rem 2rem',
+                                        borderRadius: '8px',
+                                        textDecoration: 'none',
+                                        fontWeight: 'bold',
+                                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                                    }}
+                                >
+                                    📅 Schedule a Meeting →
+                                </a>
+                                <a
+                                    href="/chat"
+                                    style={{
+                                        display: 'inline-block',
+                                        background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+                                        color: 'white',
+                                        padding: '1rem 2rem',
+                                        borderRadius: '8px',
+                                        textDecoration: 'none',
+                                        fontWeight: 'bold',
+                                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                                    }}
+                                >
+                                    💬 Chat Assistant →
+                                </a>
+                            </div>
                         </div>
 
                         <div style={{

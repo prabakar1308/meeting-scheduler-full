@@ -1,6 +1,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { IntentClassification, IntentParser } from "./parsers/intent.parser";
 import { MeetingData, MeetingParser } from "./parsers/meeting.parser";
+import { SchedulingService } from "../scheduling/scheduling.service";
 
 import { Injectable, Logger } from "@nestjs/common";
 
@@ -11,6 +12,8 @@ export interface ConversationSession {
         lastIntent?: IntentClassification;
         partialMeetingData?: Partial<MeetingData>;
         conversationHistory: string[];
+        proposedSlots?: any[];
+        pendingBooking?: any;
     };
 }
 
@@ -22,7 +25,7 @@ export class ConversationalService {
     private meetingParser: MeetingParser;
     private model: ChatOpenAI;
 
-    constructor() {
+    constructor(private schedulingService: SchedulingService) {
         this.intentParser = new IntentParser();
         this.meetingParser = new MeetingParser();
         this.model = new ChatOpenAI({
@@ -51,7 +54,7 @@ export class ConversationalService {
     /**
      * Process user input and return appropriate response
      */
-    async processMessage(sessionId: string, userMessage: string): Promise<{
+    async processMessage(sessionId: string, userMessage: string, userEmail?: string): Promise<{
         response: string;
         intent: IntentClassification;
         meetingData?: MeetingData;
@@ -95,13 +98,12 @@ export class ConversationalService {
 
                 if (meetingData.isComplete) {
                     isComplete = true;
-                    requiresScheduling = true;
-                    response = `Great! I'll schedule a meeting with the following details:\n` +
-                        `- Subject: ${meetingData.subject || 'Meeting'}\n` +
-                        `- Attendees: ${meetingData.attendees?.join(', ')}\n` +
-                        `- Time: ${this.formatTime(meetingData.startTime!)}\n` +
-                        `- Duration: ${meetingData.duration} minutes\n\n` +
-                        `Let me check availability...`;
+                    // Check availability
+                    if (userEmail) {
+                        response = await this.checkAndPropose(session, meetingData, userEmail);
+                    } else {
+                        response = "I can help with that, but I need to know who you are first. (System: User email not provided)";
+                    }
                 } else {
                     // Ask for missing information
                     response = await this.meetingParser.generateClarifyingQuestions(meetingData.missingFields);
@@ -124,10 +126,63 @@ export class ConversationalService {
 
                 if (meetingData.isComplete) {
                     isComplete = true;
-                    requiresScheduling = true;
-                    response = `Perfect! I have all the information I need. Let me check availability and schedule the meeting.`;
+                    if (userEmail) {
+                        response = await this.checkAndPropose(session, meetingData, userEmail);
+                    } else {
+                        response = "I can help with that, but I need to know who you are first. (System: User email not provided)";
+                    }
                 } else {
                     response = await this.meetingParser.generateClarifyingQuestions(meetingData.missingFields);
+                }
+                break;
+
+            case 'confirm':
+                if (session.context.pendingBooking) {
+                    // Execute booking
+                    response = await this.executeBooking(session, session.context.pendingBooking, userEmail);
+                    session.context.pendingBooking = undefined;
+                    session.context.partialMeetingData = undefined;
+                    session.context.proposedSlots = undefined;
+                } else {
+                    response = "I'm not sure what you're confirming. Could you clarify?";
+                }
+                break;
+
+            case 'select_slot':
+                if (session.context.proposedSlots && session.context.proposedSlots.length > 0) {
+                    const slotId = intent.extractedData?.slotId;
+                    let selectedSlot;
+
+                    if (slotId) {
+                        // Try to parse slot ID as number
+                        const rank = parseInt(slotId.replace(/\D/g, ''));
+                        if (!isNaN(rank) && rank > 0 && rank <= session.context.proposedSlots.length) {
+                            selectedSlot = session.context.proposedSlots[rank - 1];
+                        }
+                    }
+
+                    if (!selectedSlot) {
+                        // Fallback: assume first slot or ask for clarification
+                        // For now, let's just pick the first one if the user says "yes" or similar
+                        // But "select_slot" usually implies a specific choice.
+                        // If we can't determine, ask.
+                        response = "Which slot would you like? You can say 'the first one' or 'slot 1'.";
+                    } else {
+                        // Prepare for booking
+                        const meetingDetails = session.context.partialMeetingData!;
+                        const bookingPayload = {
+                            subject: meetingDetails.subject,
+                            attendees: meetingDetails.attendees,
+                            start: selectedSlot.start,
+                            end: selectedSlot.end,
+                            organizer: userEmail
+                        };
+
+                        session.context.pendingBooking = bookingPayload;
+                        response = `You selected: ${this.formatTime(selectedSlot.start)} to ${this.formatTime(selectedSlot.end)}. Shall I schedule this?`;
+                    }
+                } else {
+                    response = "I don't have any proposed slots to select from. Let's start over.";
                 }
                 break;
 
@@ -160,6 +215,57 @@ export class ConversationalService {
             isComplete,
             requiresScheduling,
         };
+    }
+
+    private async checkAndPropose(session: ConversationSession, meetingData: MeetingData, organizer: string): Promise<string> {
+        const startTime = new Date(meetingData.startTime!);
+        const endTime = new Date(meetingData.endTime!);
+
+        const availability = await this.schedulingService.checkAvailability(
+            organizer,
+            startTime,
+            endTime,
+            meetingData.attendees!
+        );
+
+        if (!availability.isSlotBusy) {
+            // Slot is free
+            session.context.pendingBooking = {
+                subject: meetingData.subject,
+                attendees: meetingData.attendees,
+                start: meetingData.startTime,
+                end: meetingData.endTime,
+                organizer: organizer
+            };
+            return `Good news! The slot ${this.formatTime(meetingData.startTime!)} is available for all attendees. Shall I schedule it?`;
+        } else {
+            // Slot is busy, propose alternatives
+            session.context.proposedSlots = availability.alternativeSlots;
+
+            if (availability.alternativeSlots.length === 0) {
+                return `That time is busy, and I couldn't find any immediate alternatives. Could you propose a different time?`;
+            }
+
+            let response = `That time doesn't work for everyone. Here are some alternatives:\n`;
+            availability.alternativeSlots.forEach((slot: any, index: number) => {
+                response += `${index + 1}. ${this.formatTime(slot.start)}\n`;
+            });
+            response += `\nWhich one would you like?`;
+            return response;
+        }
+    }
+
+    private async executeBooking(session: ConversationSession, bookingData: any, organizer?: string): Promise<string> {
+        try {
+            await this.schedulingService.scheduleMeeting({
+                ...bookingData,
+                organizer: organizer || bookingData.organizer
+            });
+            return `Meeting scheduled successfully! I've sent invites to all attendees.`;
+        } catch (error) {
+            this.logger.error(`Failed to schedule meeting: ${error}`);
+            return `I encountered an error while scheduling the meeting. Please try again later.`;
+        }
     }
 
     /**
