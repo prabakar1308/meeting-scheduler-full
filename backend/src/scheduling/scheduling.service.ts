@@ -7,7 +7,7 @@ const logger = new Logger('SchedulingService');
 
 @Injectable()
 export class SchedulingService {
-  private openai: OpenAI;
+  private openai: OpenAI | null = null;
 
   constructor(
     @Inject('PRISMA') private prisma: any,
@@ -15,10 +15,15 @@ export class SchedulingService {
     private agent: AgentService,
     private userSync: UserSyncService,
   ) {
-    // Initialize OpenAI client
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    // Initialize OpenAI client only if API key is available
+    if (process.env.OPENAI_API_KEY) {
+      this.openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+      logger.log('✅ OpenAI client initialized');
+    } else {
+      logger.warn('⚠️  OpenAI API key not found - some features will be disabled');
+    }
   }
 
   private extractSlots(findResult: any) {
@@ -483,6 +488,12 @@ export class SchedulingService {
   }
 
   async parseNaturalLanguage(input: string, organizer?: string): Promise<any> {
+    // Check if OpenAI is available
+    if (!this.openai) {
+      logger.warn('OpenAI not available - natural language parsing disabled');
+      throw new Error('Natural language parsing requires OpenAI API key. Please set OPENAI_API_KEY in .env or use the structured form.');
+    }
+
     try {
       const currentTime = new Date();
       const istTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));

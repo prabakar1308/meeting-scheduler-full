@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { McpService } from '../mcp/mcp.service';
 import { McpToolAdapter } from './tools/mcp-tool-adapter';
 import { DynamicStructuredTool } from '@langchain/core/tools';
+import { LLMProvider } from './providers/llm.provider';
 
 interface AgentSession {
     sessionId: string;
@@ -50,11 +50,10 @@ export class McpAgentService {
             const session = this.getSession(sessionId);
             session.conversationHistory.push({ role: 'user', content: userMessage });
 
-            // Create LLM
-            const model = new ChatOpenAI({
-                modelName: 'gpt-4o',
-                temperature: 0,
-                openAIApiKey: process.env.OPENAI_API_KEY,
+            // Create LLM using multi-modal provider
+            const model = LLMProvider.createChatModel({
+                task: 'agent',
+                temperature: 0
             });
 
             // Get MCP tools
