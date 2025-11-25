@@ -64,34 +64,52 @@ export class McpAgentService {
                 `- ${tool.name}: ${tool.description}`
             ).join('\\n');
 
-            const systemMessage = `You are a helpful meeting scheduling assistant with access to the following tools:
+            const systemMessage = `You are a helpful AI meeting scheduling assistant with access to calendar tools.
 
+CRITICAL RESPONSE RULES:
+1. ALWAYS respond to the user in natural, conversational language
+2. NEVER show raw JSON or tool syntax in your response to the user
+3. When you need to use a tool, include the JSON internally but ALSO provide a natural explanation
+
+Available tools:
 ${toolDescriptions}
 
-The user's email is: ${userEmail}
+User's email (use as organizer): ${userEmail}
+Current date/time: ${new Date().toISOString()}
 
-When scheduling meetings:
-1. ALWAYS use suggest_meeting_times FIRST to check availability
-2. Present the available times to the user
-3. Wait for user confirmation before scheduling
-4. Use schedule_meeting ONLY after the user confirms a time slot
+WORKFLOW:
+1. Use suggest_meeting_times FIRST to check availability
+2. Present available times to the user in a friendly way
+3. Wait for user confirmation
+4. Use schedule_meeting ONLY after confirmation
 
-Important guidelines:
-- Always use the user's email (${userEmail}) as the organizer
-- Convert times to UTC format (ISO 8601) when calling tools
-- Be conversational and helpful
-- Explain what you're doing
-- If a time slot is busy, suggest alternatives
+RESPONSE FORMAT:
+When using a tool, structure your response like this:
 
-Current date and time: ${new Date().toISOString()}
+[Natural language explanation for the user]
 
-To use a tool, respond with JSON in this format:
 {
   "action": "tool_name",
-  "args": { ...tool arguments... }
+  "args": {...}
 }
 
-If you don't need to use a tool, just respond normally.`;
+EXAMPLES:
+
+✅ GOOD Response:
+"I'll check availability for you and the attendees tomorrow from 2-3 PM IST. Let me find some good time slots for you.
+
+{
+  "action": "suggest_meeting_times",
+  "args": {...}
+}"
+
+❌ BAD Response (don't do this):
+{
+  "action": "suggest_meeting_times",
+  "args": {...}
+}
+
+Remember: Always include a friendly explanation BEFORE the tool JSON!`;
 
             // Build conversation context
             const messages = [
@@ -114,9 +132,13 @@ If you don't need to use a tool, just respond normally.`;
                         const toolCall = JSON.parse(jsonMatch[0]);
                         const tool = tools.find(t => t.name === toolCall.action);
 
+                        // Extract the natural language explanation (text before JSON)
+                        const naturalResponse = responseText.substring(0, jsonMatch.index).trim();
+
                         if (tool) {
                             this.logger.log(`[Agent] Calling tool: ${toolCall.action}`);
                             this.logger.log(`[Agent] Tool args:`, toolCall.args);
+                            this.logger.log(`[Agent] Natural response: ${naturalResponse}`);
 
                             // Execute tool
                             const toolResult = await tool.func(toolCall.args);
@@ -126,11 +148,20 @@ If you don't need to use a tool, just respond normally.`;
                             const finalMessages = [
                                 ...messages,
                                 { role: 'assistant', content: responseText },
-                                { role: 'system', content: `Tool ${toolCall.action} returned: ${toolResult}\\n\\nPlease provide a natural language response to the user based on this result.` },
+                                { role: 'system', content: `Tool ${toolCall.action} returned: ${toolResult}\n\nPlease provide a natural language response to the user based on this result. DO NOT include JSON in your response.` },
                             ];
 
                             const finalResponse = await model.invoke(finalMessages.map(m => [m.role, m.content]));
                             responseText = finalResponse.content as string;
+
+                            // Remove any JSON from the final response (just in case)
+                            const finalJsonMatch = responseText.match(/\{[\s\S]*\}/);
+                            if (finalJsonMatch) {
+                                responseText = responseText.substring(0, finalJsonMatch.index).trim();
+                            }
+                        } else if (naturalResponse) {
+                            // Tool not found, but we have a natural response
+                            responseText = naturalResponse;
                         }
                     }
                 } catch (error) {
@@ -138,7 +169,6 @@ If you don't need to use a tool, just respond normally.`;
                     responseText = `I tried to use a tool but encountered an error. Let me try to help you differently.`;
                 }
             }
-
             session.conversationHistory.push({ role: 'assistant', content: responseText });
 
             this.logger.log(`[Agent Chat] Final response: ${responseText}`);
