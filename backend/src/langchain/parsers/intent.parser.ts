@@ -14,7 +14,7 @@ export const intentSchema = z.object({
         date: z.string().optional(),
         time: z.string().optional(),
         duration: z.number().optional(),
-        slotId: z.string().optional().describe('Slot ID or rank if selecting a slot'),
+        slotId: z.string().nullable().optional().describe('Slot ID or rank if selecting a slot'),
     }).optional().describe('Any meeting data that could be extracted from the input'),
 });
 

@@ -2,11 +2,13 @@ import { ChatOpenAI } from "@langchain/openai";
 import { IntentClassification, IntentParser } from "./parsers/intent.parser";
 import { MeetingData, MeetingParser } from "./parsers/meeting.parser";
 import { SchedulingService } from "../scheduling/scheduling.service";
+import { GraphClient } from "../graph/graph.client";
 
 import { Injectable, Logger } from "@nestjs/common";
 
 export interface ConversationSession {
     sessionId: string;
+    organizerEmail?: string;
 
     context: {
         lastIntent?: IntentClassification;
@@ -25,7 +27,10 @@ export class ConversationalService {
     private meetingParser: MeetingParser;
     private model: ChatOpenAI;
 
-    constructor(private schedulingService: SchedulingService) {
+    constructor(
+        private schedulingService: SchedulingService,
+        private graphClient: GraphClient
+    ) {
         this.intentParser = new IntentParser();
         this.meetingParser = new MeetingParser();
         this.model = new ChatOpenAI({
@@ -36,17 +41,64 @@ export class ConversationalService {
     }
 
     /**
+     * Resolve attendee names to email addresses
+     * Supports both email addresses and display names
+     */
+    private async resolveAttendeesToEmails(attendees: string[], organizerEmail: string): Promise<string[]> {
+        const resolved: string[] = [];
+
+        for (const attendee of attendees) {
+            // If already an email, use it
+            if (attendee.includes('@')) {
+                resolved.push(attendee);
+                continue;
+            }
+
+            // Try to find user by display name
+            try {
+                this.logger.log(`Looking up user by name: ${attendee}`);
+                const users = await this.graphClient.listUsers(999);
+
+                // Search for matching display name (case-insensitive)
+                const matchedUser = users.find(user =>
+                    user.displayName?.toLowerCase().includes(attendee.toLowerCase()) ||
+                    user.mail?.toLowerCase().includes(attendee.toLowerCase()) ||
+                    user.userPrincipalName?.toLowerCase().includes(attendee.toLowerCase())
+                );
+
+                if (matchedUser) {
+                    const email = matchedUser.mail || matchedUser.userPrincipalName;
+                    this.logger.log(`Resolved "${attendee}" to ${email}`);
+                    resolved.push(email);
+                } else {
+                    this.logger.warn(`Could not find user: ${attendee}`);
+                    // Keep the original name, will be handled later
+                    resolved.push(attendee);
+                }
+            } catch (error) {
+                this.logger.error(`Error looking up user ${attendee}:`, error);
+                resolved.push(attendee);
+            }
+        }
+
+        return resolved;
+    }
+
+    /**
      * Get or create a conversation session
      */
-    private getSession(sessionId: string): ConversationSession {
+    private getSession(sessionId: string, organizerEmail?: string): ConversationSession {
         if (!this.sessions.has(sessionId)) {
             this.sessions.set(sessionId, {
                 sessionId,
-
+                organizerEmail,
                 context: {
                     conversationHistory: [],
                 },
             });
+        } else if (organizerEmail && !this.sessions.get(sessionId)!.organizerEmail) {
+            // Update organizer email if not set
+            this.sessions.get(sessionId)!.organizerEmail = organizerEmail;
         }
         return this.sessions.get(sessionId)!;
     }
@@ -61,7 +113,10 @@ export class ConversationalService {
         isComplete: boolean;
         requiresScheduling: boolean;
     }> {
-        const session = this.getSession(sessionId);
+        const session = this.getSession(sessionId, userEmail);
+
+        // Use session organizer email (from signed-in user)
+        const organizer = session.organizerEmail || userEmail;
 
         // Add user message to history
         session.context.conversationHistory.push(`User: ${userMessage}`);
@@ -94,15 +149,20 @@ export class ConversationalService {
                     meetingData = this.mergeMeetingData(session.context.partialMeetingData, meetingData);
                 }
 
+                // Resolve attendee names to emails
+                if (meetingData.attendees && organizer) {
+                    meetingData.attendees = await this.resolveAttendeesToEmails(meetingData.attendees, organizer);
+                }
+
                 session.context.partialMeetingData = meetingData;
 
                 if (meetingData.isComplete) {
                     isComplete = true;
                     // Check availability
-                    if (userEmail) {
-                        response = await this.checkAndPropose(session, meetingData, userEmail);
+                    if (organizer) {
+                        response = await this.checkAndPropose(session, meetingData, organizer);
                     } else {
-                        response = "I can help with that, but I need to know who you are first. (System: User email not provided)";
+                        response = "I can help with that, but I need to know who you are first. Please sign in to continue.";
                     }
                 } else {
                     // Ask for missing information
@@ -122,14 +182,19 @@ export class ConversationalService {
                     meetingData = this.mergeMeetingData(session.context.partialMeetingData, meetingData);
                 }
 
+                // Resolve attendee names to emails
+                if (meetingData.attendees && organizer) {
+                    meetingData.attendees = await this.resolveAttendeesToEmails(meetingData.attendees, organizer);
+                }
+
                 session.context.partialMeetingData = meetingData;
 
                 if (meetingData.isComplete) {
                     isComplete = true;
-                    if (userEmail) {
-                        response = await this.checkAndPropose(session, meetingData, userEmail);
+                    if (organizer) {
+                        response = await this.checkAndPropose(session, meetingData, organizer);
                     } else {
-                        response = "I can help with that, but I need to know who you are first. (System: User email not provided)";
+                        response = "I can help with that, but I need to know who you are first. Please sign in to continue.";
                     }
                 } else {
                     response = await this.meetingParser.generateClarifyingQuestions(meetingData.missingFields);
@@ -139,7 +204,7 @@ export class ConversationalService {
             case 'confirm':
                 if (session.context.pendingBooking) {
                     // Execute booking
-                    response = await this.executeBooking(session, session.context.pendingBooking, userEmail);
+                    response = await this.executeBooking(session, session.context.pendingBooking, organizer);
                     session.context.pendingBooking = undefined;
                     session.context.partialMeetingData = undefined;
                     session.context.proposedSlots = undefined;
@@ -163,9 +228,6 @@ export class ConversationalService {
 
                     if (!selectedSlot) {
                         // Fallback: assume first slot or ask for clarification
-                        // For now, let's just pick the first one if the user says "yes" or similar
-                        // But "select_slot" usually implies a specific choice.
-                        // If we can't determine, ask.
                         response = "Which slot would you like? You can say 'the first one' or 'slot 1'.";
                     } else {
                         // Prepare for booking
@@ -175,7 +237,7 @@ export class ConversationalService {
                             attendees: meetingDetails.attendees,
                             start: selectedSlot.start,
                             end: selectedSlot.end,
-                            organizer: userEmail
+                            organizer: organizer
                         };
 
                         session.context.pendingBooking = bookingPayload;
@@ -257,8 +319,22 @@ export class ConversationalService {
 
     private async executeBooking(session: ConversationSession, bookingData: any, organizer?: string): Promise<string> {
         try {
+            // Convert attendees to proper format if they're just strings
+            const attendees = Array.isArray(bookingData.attendees)
+                ? bookingData.attendees.map((attendee: any) => {
+                    if (typeof attendee === 'string') {
+                        return {
+                            emailAddress: { address: attendee },
+                            type: 'Required'
+                        };
+                    }
+                    return attendee;
+                })
+                : [];
+
             await this.schedulingService.scheduleMeeting({
                 ...bookingData,
+                attendees,
                 organizer: organizer || bookingData.organizer
             });
             return `Meeting scheduled successfully! I've sent invites to all attendees.`;
