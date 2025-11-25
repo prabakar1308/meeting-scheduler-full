@@ -6,9 +6,10 @@ import { AuthModule } from '../auth/auth.module';
 import { AgentModule } from '../agent/agent.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { HttpModule } from '@nestjs/axios';
+import { LangchainModule } from '../langchain/langchain.module';
 
 @Module({
-  imports: [HttpModule, PrismaModule, GraphModule, AuthModule, AgentModule],
+  imports: [HttpModule, PrismaModule, GraphModule, AuthModule, AgentModule, LangchainModule],
   controllers: [SchedulingController],
   providers: [SchedulingService],
   exports: [SchedulingService],
