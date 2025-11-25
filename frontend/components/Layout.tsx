@@ -1,6 +1,8 @@
 import React, { ReactNode } from 'react';
 import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { loginRequest } from '../lib/msalConfig';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 interface LayoutProps {
     children: ReactNode;
@@ -9,6 +11,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
     const { instance, accounts } = useMsal();
     const isAuthenticated = useIsAuthenticated();
+    const router = useRouter();
 
     const handleLogin = () => {
         instance.loginPopup(loginRequest).catch((e) => {
@@ -39,15 +42,46 @@ export default function Layout({ children }: LayoutProps) {
                     </h1>
                     {isAuthenticated && (
                         <div style={{ display: 'flex', gap: '1rem' }}>
-                            <a href="/" style={{ color: 'white', textDecoration: 'none', opacity: 0.9 }}>
+                            <Link href="/" style={{
+                                color: 'white',
+                                textDecoration: 'none',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '6px',
+                                transition: 'background 0.2s',
+                                background: router.pathname === '/' ? 'rgba(255,255,255,0.2)' : 'transparent'
+                            }}>
                                 Dashboard
-                            </a>
-                            <a href="/schedule" style={{ color: 'white', textDecoration: 'none', opacity: 0.9 }}>
+                            </Link>
+                            <Link href="/schedule" style={{
+                                color: 'white',
+                                textDecoration: 'none',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '6px',
+                                transition: 'background 0.2s',
+                                background: router.pathname === '/schedule' ? 'rgba(255,255,255,0.2)' : 'transparent'
+                            }}>
                                 Schedule Meeting
-                            </a>
-                            <a href="/chat" style={{ color: 'white', textDecoration: 'none', opacity: 0.9 }}>
+                            </Link>
+                            <Link href="/chat" style={{
+                                color: 'white',
+                                textDecoration: 'none',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '6px',
+                                transition: 'background 0.2s',
+                                background: router.pathname === '/chat' ? 'rgba(255,255,255,0.2)' : 'transparent'
+                            }}>
                                 💬 Chat
-                            </a>
+                            </Link>
+                            <Link href="/agent-chat" style={{
+                                color: 'white',
+                                textDecoration: 'none',
+                                padding: '0.5rem 1rem',
+                                borderRadius: '6px',
+                                transition: 'background 0.2s',
+                                background: router.pathname === '/agent-chat' ? 'rgba(255,255,255,0.2)' : 'transparent'
+                            }}>
+                                🤖 AI Agent
+                            </Link>
                         </div>
                     )}
                 </div>

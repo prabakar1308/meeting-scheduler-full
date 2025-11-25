@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 export class McpService implements OnModuleInit {
     private server: McpServer;
     private transport: SSEServerTransport | null = null;
+    private toolHandlers: Map<string, (args: any) => Promise<any>> = new Map();
 
     constructor(private schedulingService: SchedulingService) {
         this.server = new McpServer({
@@ -31,19 +32,29 @@ export class McpService implements OnModuleInit {
             end: z3.string().datetime().describe('End of the time window (ISO 8601 datetime)'),
         });
 
+        const suggestHandler = async (args: any) => {
+            const result = await this.schedulingService.suggestSlots(args);
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+            };
+        };
+
+        const scheduleHandler = async (args: any) => {
+            const result = await this.schedulingService.scheduleMeeting(args);
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+            };
+        };
+
         this.server.registerTool(
             'suggest_meeting_times',
             {
                 description: 'Suggest meeting times based on availability',
                 inputSchema: meetingParamsSchema as any,
             },
-            async (args: any) => {
-                const result = await this.schedulingService.suggestSlots(args);
-                return {
-                    content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                };
-            },
+            suggestHandler,
         );
+        this.toolHandlers.set('suggest_meeting_times', suggestHandler);
 
         this.server.registerTool(
             'schedule_meeting',
@@ -51,13 +62,9 @@ export class McpService implements OnModuleInit {
                 description: 'Schedule a meeting with the best available slot',
                 inputSchema: meetingParamsSchema as any,
             },
-            async (args: any) => {
-                const result = await this.schedulingService.scheduleMeeting(args);
-                return {
-                    content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                };
-            },
+            scheduleHandler,
         );
+        this.toolHandlers.set('schedule_meeting', scheduleHandler);
     }
 
     async handleSSE(req: Request, res: Response) {
@@ -72,5 +79,29 @@ export class McpService implements OnModuleInit {
         }
         // Pass the parsed body to the transport, as NestJS has already consumed the stream
         await this.transport.handlePostMessage(req, res, req.body);
+    }
+
+    /**
+     * Execute an MCP tool programmatically (for LangChain integration)
+     */
+    async executeTool(toolName: string, args: any): Promise<any> {
+        const handler = this.toolHandlers.get(toolName);
+
+        if (!handler) {
+            throw new Error(`Tool not found: ${toolName}`);
+        }
+
+        // Execute the tool handler
+        const result = await handler(args);
+
+        // Extract text content from MCP response format
+        if (result.content && Array.isArray(result.content)) {
+            const textContent = result.content.find((c: any) => c.type === 'text');
+            if (textContent) {
+                return JSON.parse(textContent.text);
+            }
+        }
+
+        return result;
     }
 }

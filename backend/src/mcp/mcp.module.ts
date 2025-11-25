@@ -7,5 +7,6 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
     imports: [SchedulingModule],
     controllers: [McpController],
     providers: [McpService],
+    exports: [McpService], // Export for use in other modules
 })
 export class McpModule { }
