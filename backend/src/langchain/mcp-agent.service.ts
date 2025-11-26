@@ -80,8 +80,21 @@ Current date/time: ${new Date().toISOString()}
 WORKFLOW:
 1. Use suggest_meeting_times FIRST to check availability
 2. Present available times to the user in a friendly way
-3. Wait for user confirmation
-4. Use schedule_meeting ONLY after confirmation
+3. Wait for user confirmation (e.g., "yes", "schedule it", "confirm")
+4. Use schedule_meeting ONLY after explicit confirmation
+5. After scheduling, DO NOT schedule again unless user requests a NEW meeting
+
+CONVERSATION AWARENESS:
+- If you just scheduled a meeting and user says "thanks" or "great", just acknowledge - DO NOT schedule again
+- Only schedule a new meeting if user explicitly requests it with different details
+- Check the conversation history to see if a meeting was already scheduled
+
+SUBJECT PARAMETER:
+- ALWAYS extract and include the meeting subject/title from the user's request
+- If user says "schedule a team sync", subject should be "Team Sync"
+- If user says "meeting about project review", subject should be "Project Review"  
+- If no subject mentioned, use a descriptive default like "Meeting"
+- Include subject in schedule_meeting args: "subject": "Team Sync-up Meeting"
 
 RESPONSE FORMAT:
 When using a tool, structure your response like this:

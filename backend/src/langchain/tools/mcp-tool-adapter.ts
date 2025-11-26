@@ -37,18 +37,45 @@ export class McpToolAdapter {
             }),
             func: async (input) => {
                 try {
-                    this.logger.log(`[suggest_meeting_times] Called with:`, input);
+                    this.logger.log(`[suggest_meeting_times] Called with:`, JSON.stringify(input, null, 2));
 
-                    const result = await mcpService.executeTool('suggest_meeting_times', input);
+                    // Normalize parameter names (LLM might use start_time/end_time instead of start/end)
+                    const normalizedInput = {
+                        organizer: input.organizer,
+                        attendees: input.attendees,
+                        start: input.start || input.start_time,
+                        end: input.end || input.end_time
+                    };
 
-                    this.logger.log(`[suggest_meeting_times] Result:`, result);
+                    // Validate required parameters
+                    if (!normalizedInput.organizer) {
+                        throw new Error('Missing required parameter: organizer');
+                    }
+                    if (!normalizedInput.attendees || !Array.isArray(normalizedInput.attendees) || normalizedInput.attendees.length === 0) {
+                        throw new Error('Missing required parameter: attendees (must be a non-empty array)');
+                    }
+                    if (!normalizedInput.start) {
+                        throw new Error('Missing required parameter: start (or start_time)');
+                    }
+                    if (!normalizedInput.end) {
+                        throw new Error('Missing required parameter: end (or end_time)');
+                    }
+
+                    this.logger.log(`[suggest_meeting_times] Validation passed. Executing tool...`);
+
+                    const result = await mcpService.executeTool('suggest_meeting_times', normalizedInput);
+
+                    this.logger.log(`[suggest_meeting_times] Result:`, JSON.stringify(result, null, 2));
 
                     return JSON.stringify(result, null, 2);
                 } catch (error: any) {
                     this.logger.error(`[suggest_meeting_times] Error:`, error);
+                    this.logger.error(`[suggest_meeting_times] Error stack:`, error.stack);
+                    this.logger.error(`[suggest_meeting_times] Input was:`, JSON.stringify(input, null, 2));
                     return JSON.stringify({
                         error: error.message,
                         suggestion: 'Please check the input parameters and try again. Make sure all email addresses are valid and times are in ISO 8601 format.',
+                        receivedInput: input
                     });
                 }
             },
@@ -73,18 +100,52 @@ export class McpToolAdapter {
             }),
             func: async (input) => {
                 try {
-                    this.logger.log(`[schedule_meeting] Called with:`, input);
+                    this.logger.log(`[schedule_meeting] Called with:`, JSON.stringify(input, null, 2));
 
-                    const result = await mcpService.executeTool('schedule_meeting', input);
+                    // Normalize parameter names (LLM might use start_time/end_time instead of start/end)
+                    const normalizedInput = {
+                        organizer: input.organizer,
+                        attendees: input.attendees,
+                        start: input.start || input.start_time,
+                        end: input.end || input.end_time,
+                        subject: input.subject
+                    };
 
-                    this.logger.log(`[schedule_meeting] Result:`, result);
+                    // Validate required parameters
+                    if (!normalizedInput.organizer) {
+                        throw new Error('Missing required parameter: organizer');
+                    }
+                    if (!normalizedInput.attendees || !Array.isArray(normalizedInput.attendees) || normalizedInput.attendees.length === 0) {
+                        throw new Error('Missing required parameter: attendees (must be a non-empty array)');
+                    }
+                    if (!normalizedInput.start) {
+                        throw new Error('Missing required parameter: start (or start_time)');
+                    }
+                    if (!normalizedInput.end) {
+                        throw new Error('Missing required parameter: end (or end_time)');
+                    }
+
+                    this.logger.log(`[schedule_meeting] Validation passed. Creating meeting...`);
+
+                    const result = await mcpService.executeTool('schedule_meeting', normalizedInput);
+
+                    this.logger.log(`[schedule_meeting] Result:`, JSON.stringify(result, null, 2));
 
                     return JSON.stringify(result, null, 2);
                 } catch (error: any) {
                     this.logger.error(`[schedule_meeting] Error:`, error);
+                    this.logger.error(`[schedule_meeting] Error stack:`, error.stack);
+                    this.logger.error(`[schedule_meeting] Input was:`, JSON.stringify(input, null, 2));
+
+                    // Check if it's a Graph API error
+                    if (error.response?.data?.error) {
+                        this.logger.error(`[schedule_meeting] Graph API error:`, JSON.stringify(error.response.data.error, null, 2));
+                    }
+
                     return JSON.stringify({
                         error: error.message,
-                        suggestion: 'The meeting could not be scheduled. Please verify the time slot is still available.',
+                        suggestion: 'The meeting could not be scheduled. Please verify the time slot is still available and all parameters are correct.',
+                        receivedInput: input
                     });
                 }
             },

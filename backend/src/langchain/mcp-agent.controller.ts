@@ -39,11 +39,19 @@ export class McpAgentController {
             }
         }
 
+        // Fallback for development/testing: use a default test email
         if (!userEmail) {
-            return {
-                response: 'Please sign in to use the AI agent.',
-                error: 'NO_USER_EMAIL'
-            };
+            // Check if we're in development mode
+            const isDevelopment = process.env.NODE_ENV !== 'production';
+            if (isDevelopment) {
+                userEmail = 'prabakar1308@6tjp7n.onmicrosoft.com'; // Default test user
+                this.logger.warn(`⚠️ No authenticated user, using test email: ${userEmail}`);
+            } else {
+                return {
+                    response: 'Please sign in to use the AI agent.',
+                    error: 'NO_USER_EMAIL'
+                };
+            }
         }
 
         const response = await this.agentService.chat(

@@ -78,6 +78,15 @@ export class SchedulingService {
 
     const { attendees, start, end } = dto;
 
+    // Validate required parameters
+    if (!start || !end) {
+      throw new Error('Missing required parameters: start and end times are required');
+    }
+
+    if (!attendees || attendees.length === 0) {
+      throw new Error('Missing required parameter: at least one attendee is required');
+    }
+
     // Validate that start and end times are in the future (timestamp-specific validation)
     // Using IST timezone: 10:00 AM to 9:00 PM (Asia/Kolkata)
     // IST is UTC+5:30, so:
@@ -141,8 +150,77 @@ export class SchedulingService {
 
     const duration = (endDate.getTime() - startDate.getTime()) / (1000 * 60);
 
-    const findRes = await this.graph.findMeetingTimes(organizer, internal, {
-      attendees: internal,
+    // Normalize attendees to Graph API format
+    // Handle both plain strings and objects with emailAddress.address
+    const normalizedAttendees = internal.map(attendee => {
+      if (typeof attendee === 'string') {
+        return {
+          emailAddress: {
+            address: attendee
+          },
+          type: 'Required'
+        };
+      }
+      return attendee;
+    });
+
+    logger.log(`Normalized attendees for Graph API:`, JSON.stringify(normalizedAttendees, null, 2));
+
+    // STEP 1: Check if the requested time slot is available using getSchedule
+    logger.log(`🔍 Checking availability for requested time slot: ${start} to ${end}`);
+
+    const scheduleResponse = await this.graph.getSchedule(
+      organizer,
+      internalEmails,
+      start,
+      end
+    );
+
+    logger.log(`📅 Schedule API response:`, JSON.stringify(scheduleResponse, null, 2));
+
+    // Check if anyone is busy during the requested time
+    let isRequestedSlotBusy = false;
+    const availabilityStatus: Record<string, string> = {};
+
+    scheduleResponse.value?.forEach((schedule: any) => {
+      const email = schedule.scheduleId;
+      const isBusy = schedule.scheduleItems?.some((item: any) => {
+        if (item.status !== 'busy' && item.status !== 'tentative') {
+          return false;
+        }
+        // Check for overlap with requested time
+        const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
+        const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
+        return startDate < itemEnd && itemStart < endDate;
+      });
+
+      availabilityStatus[email] = isBusy ? 'busy' : 'free';
+      if (isBusy) isRequestedSlotBusy = true;
+    });
+
+    logger.log(`📊 Availability status:`, availabilityStatus);
+    logger.log(`⚠️ Is requested slot busy: ${isRequestedSlotBusy}`);
+
+    // STEP 2: If the requested slot is free, return it as the primary suggestion
+    if (!isRequestedSlotBusy) {
+      logger.log(`✅ Requested time slot is available!`);
+      return {
+        slots: [{
+          start,
+          end,
+          available: true,
+          confidence: 100,
+          reason: 'Requested time slot is available for all attendees'
+        }],
+        externalAttendees: external.length > 0 ? external.map(a => a.emailAddress?.address || a) : undefined
+      };
+    }
+
+    // STEP 3: If requested slot is busy, find alternative times
+    logger.log(`⚠️ Requested slot is busy. Finding alternative times...`);
+
+    const findRes = await this.graph.findMeetingTimes(organizer, normalizedAttendees, {
+      attendees: normalizedAttendees,
       timeConstraint: {
         timeslots: [{
           start: { dateTime: start, timeZone: 'UTC' },
@@ -156,10 +234,21 @@ export class SchedulingService {
       isOrganizerOptional: false,
     });
 
+    logger.log(`📊 Graph API findMeetingTimes response:`, JSON.stringify(findRes, null, 2));
+
     const slots = this.extractSlots(findRes);
+
+    logger.log(`✅ Extracted ${slots.length} alternative slots from Graph API response`);
+    if (slots.length === 0) {
+      logger.warn(`⚠️ No alternative slots found! Graph API response details:`);
+      logger.warn(`   - emptySuggestionsReason: ${findRes?.emptySuggestionsReason}`);
+      logger.warn(`   - meetingTimeSuggestions count: ${findRes?.meetingTimeSuggestions?.length || 0}`);
+    }
 
     return {
       slots,
+      requestedSlotBusy: true,
+      availabilityStatus,
       externalAttendees: external.length > 0 ? external.map(a => a.emailAddress?.address || a) : undefined
     };
   }
@@ -195,6 +284,21 @@ export class SchedulingService {
     // Use subject from payload, or default to "Meeting"
     const meetingSubject = subject || 'Meeting';
 
+    // Normalize all attendees to Graph API format
+    const normalizedAllAttendees = attendees.map((attendee: any) => {
+      if (typeof attendee === 'string') {
+        return {
+          emailAddress: {
+            address: attendee
+          },
+          type: 'Required'
+        };
+      }
+      return attendee;
+    });
+
+    logger.log(`📧 Creating meeting with normalized attendees:`, JSON.stringify(normalizedAllAttendees, null, 2));
+
     const payload = {
       subject: meetingSubject,
       body: {
@@ -203,7 +307,7 @@ export class SchedulingService {
       },
       start: { dateTime: start, timeZone: 'UTC' },
       end: { dateTime: end, timeZone: 'UTC' },
-      attendees, // Include ALL attendees (internal + external)
+      attendees: normalizedAllAttendees, // Use normalized attendees
     };
 
     const created = await this.graph.createEventForUser(organizer, payload);
