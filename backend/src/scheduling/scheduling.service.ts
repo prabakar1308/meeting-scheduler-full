@@ -2,12 +2,13 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { GraphClient } from '../graph/graph.client';
 import { UserSyncService } from '../user-sync/user-sync.service';
 import { AgentService } from '../agent/agent.service';
-import OpenAI from 'openai';
+import { LLMProvider } from '../langchain/providers/llm.provider';
+import { SystemMessage, HumanMessage } from '@langchain/core/messages';
+
 const logger = new Logger('SchedulingService');
 
 @Injectable()
 export class SchedulingService {
-  private openai: OpenAI | null = null;
 
   constructor(
     @Inject('PRISMA') private prisma: any,
@@ -15,14 +16,12 @@ export class SchedulingService {
     private agent: AgentService,
     private userSync: UserSyncService,
   ) {
-    // Initialize OpenAI client only if API key is available
-    if (process.env.OPENAI_API_KEY) {
-      this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-      logger.log('✅ OpenAI client initialized');
+    // Check if any LLM provider is available
+    const provider = LLMProvider.getProvider();
+    if (provider !== 'none') {
+      logger.log(`✅ LLM provider initialized: ${provider}`);
     } else {
-      logger.warn('⚠️  OpenAI API key not found - some features will be disabled');
+      logger.warn('⚠️  No LLM API key found - natural language features will be disabled');
     }
   }
 
@@ -592,10 +591,10 @@ export class SchedulingService {
   }
 
   async parseNaturalLanguage(input: string, organizer?: string): Promise<any> {
-    // Check if OpenAI is available
-    if (!this.openai) {
-      logger.warn('OpenAI not available - natural language parsing disabled');
-      throw new Error('Natural language parsing requires OpenAI API key. Please set OPENAI_API_KEY in .env or use the structured form.');
+    // Check if any LLM provider is available
+    if (LLMProvider.getProvider() === 'none') {
+      logger.warn('No LLM provider available - natural language parsing disabled');
+      throw new Error('Natural language parsing requires an LLM API key (OpenAI, Azure OpenAI, or Groq). Please set one in .env.');
     }
 
     try {
@@ -621,17 +620,19 @@ Important timezone rules:
 
 Return ONLY a JSON object with these fields. If duration is specified but not end time, calculate endTime. If end time is specified but not duration, calculate duration.`;
 
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: input }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-      });
+      const model = LLMProvider.createChatModel({ task: 'extraction', temperature: 0.3 });
 
-      const parsed = JSON.parse(completion.choices[0].message.content || '{}');
+      const response = await model.invoke([
+        new SystemMessage(systemPrompt),
+        new HumanMessage(input)
+      ]);
+
+      let content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+
+      // Clean up markdown code blocks if present
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+      const parsed = JSON.parse(content);
 
       // Validate that parsed times are in the future
       const now = new Date();
@@ -704,7 +705,7 @@ Return ONLY a JSON object with these fields. If duration is specified but not en
       };
     } catch (error) {
       logger.error('Error parsing natural language:', error);
-      throw new Error('Failed to parse meeting details from input');
+      throw new Error(error ? String(error) : 'Failed to parse meeting details from input');
     }
   }
 }

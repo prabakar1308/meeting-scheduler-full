@@ -1,14 +1,14 @@
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAI, AzureChatOpenAI } from '@langchain/openai';
 import { ChatGroq } from '@langchain/groq';
 
 /**
- * Multi-modal LLM provider that supports both OpenAI and Groq
+ * Multi-modal LLM provider that supports OpenAI, Azure OpenAI, and Groq
  * Automatically falls back to available provider
  */
 export class LLMProvider {
     /**
      * Create a chat model with automatic provider selection
-     * Priority: Groq (free) > OpenAI (paid)
+     * Priority: Groq (free) > Azure OpenAI (enterprise) > OpenAI (paid)
      */
     static createChatModel(options: {
         task: 'intent' | 'extraction' | 'agent' | 'general';
@@ -18,15 +18,18 @@ export class LLMProvider {
 
         // Check which API keys are available
         const hasGroq = !!process.env.GROQ_API_KEY;
+        const hasAzure = !!process.env.AZURE_OPENAI_API_KEY;
         const hasOpenAI = !!process.env.OPENAI_API_KEY;
 
-        if (!hasGroq && !hasOpenAI) {
-            throw new Error('No LLM API key found. Please set either GROQ_API_KEY or OPENAI_API_KEY in .env');
+        if (!hasGroq && !hasAzure && !hasOpenAI) {
+            throw new Error('No LLM API key found. Please set GROQ_API_KEY, AZURE_OPENAI_API_KEY, or OPENAI_API_KEY in .env');
         }
 
         // Select model based on task and available provider
         if (hasGroq) {
             return this.createGroqModel(task, temperature);
+        } else if (hasAzure) {
+            return this.createAzureOpenAIModel(task, temperature);
         } else {
             return this.createOpenAIModel(task, temperature);
         }
@@ -51,6 +54,23 @@ export class LLMProvider {
     }
 
     /**
+     * Create Azure OpenAI model (ENTERPRISE, SECURE)
+     */
+    private static createAzureOpenAIModel(task: string, temperature: number) {
+        // For Azure, we typically use the deployment name which maps to a specific model
+        // We can use env vars to map tasks to deployments if needed, or default to a single deployment
+        const deploymentName = process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME;
+
+        return new AzureChatOpenAI({
+            azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+            azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
+            azureOpenAIApiDeploymentName: deploymentName,
+            azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-05-01-preview",
+            temperature,
+        });
+    }
+
+    /**
      * Create OpenAI model (PAID, HIGH QUALITY)
      */
     private static createOpenAIModel(task: string, temperature: number) {
@@ -71,8 +91,9 @@ export class LLMProvider {
     /**
      * Get current provider name
      */
-    static getProvider(): 'groq' | 'openai' | 'none' {
+    static getProvider(): 'groq' | 'azure' | 'openai' | 'none' {
         if (process.env.GROQ_API_KEY) return 'groq';
+        if (process.env.AZURE_OPENAI_API_KEY) return 'azure';
         if (process.env.OPENAI_API_KEY) return 'openai';
         return 'none';
     }
@@ -81,7 +102,8 @@ export class LLMProvider {
      * Check if provider supports structured output
      */
     static supportsStructuredOutput(): boolean {
-        // Only OpenAI supports StructuredOutputParser
-        return this.getProvider() === 'openai';
+        // OpenAI and Azure OpenAI support StructuredOutputParser
+        const provider = this.getProvider();
+        return provider === 'openai' || provider === 'azure';
     }
 }

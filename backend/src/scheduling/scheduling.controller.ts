@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards, Request } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards, Request, HttpException } from '@nestjs/common';
 import { SchedulingService } from './scheduling.service';
 import { SuggestRequestDTO, ScheduleRequestDTO } from './types';
 import { OptionalAzureADGuard } from '../auth/optional-azure-ad.guard';
@@ -34,7 +34,15 @@ export class SchedulingController {
   @Post('parse-natural-language')
   @UseGuards(OptionalAzureADGuard)
   async parseNaturalLanguage(@Body() dto: { naturalLanguageInput: string }, @Request() req: any) {
-    const userEmail = req.user?.email;
-    return this.svc.parseNaturalLanguage(dto.naturalLanguageInput, userEmail);
+    try {
+      const userEmail = req.user?.email;
+      return await this.svc.parseNaturalLanguage(dto.naturalLanguageInput, userEmail);
+    } catch (error: any) {
+      console.log(error)
+      throw new HttpException(
+        error.message || 'Failed to parse natural language input',
+        error.status || 400
+      );
+    }
   }
 }

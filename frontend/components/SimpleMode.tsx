@@ -56,7 +56,8 @@ export default function SimpleMode({ onError, onSuccess }: SimpleModeProps) {
             setParsedDetails(parsed);
             setShowConfirmation(true);
         } catch (err: any) {
-            onError(err.message || 'Failed to parse meeting details');
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to parse meeting details';
+            onError(errorMessage);
             console.error('Error:', err);
         } finally {
             setLoading(false);
@@ -104,7 +105,8 @@ export default function SimpleMode({ onError, onSuccess }: SimpleModeProps) {
             onSuccess();
         } catch (err: any) {
             console.error('❌ Frontend: Error scheduling meeting:', err);
-            onError(err.message || 'Failed to schedule meeting');
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to schedule meeting';
+            onError(errorMessage);
         } finally {
             setLoading(false);
         }
