@@ -5,7 +5,7 @@ import { LLMProvider } from '../providers/llm.provider';
 
 // Define the intent schema
 export const intentSchema = z.object({
-    intent: z.enum(['schedule_new', 'modify_existing', 'ask_question', 'clarify', 'cancel', 'confirm', 'select_slot']).describe('The user\'s primary intent'),
+    intent: z.enum(['schedule_new', 'modify_existing', 'query_meetings', 'ask_question', 'clarify', 'cancel', 'confirm', 'select_slot']).describe('The user\'s primary intent'),
     confidence: z.number().min(0).max(1).describe('Confidence score for the classification'),
     context: z.string().optional().describe('Additional context about the intent'),
     extractedData: z.object({
@@ -38,7 +38,8 @@ export class IntentParser {
 Analyze the user's input and classify their intent into one of these categories:
 - schedule_new: User wants to schedule a new meeting
 - modify_existing: User wants to modify a previously discussed meeting
-- ask_question: User is asking a question about scheduling or availability
+- query_meetings: User wants to view/list/check their existing meetings (e.g., "show my meetings", "what meetings do I have")
+- ask_question: User is asking a general question about scheduling or availability
 - clarify: User is providing additional information or clarification
 - cancel: User wants to cancel a meeting or stop the process
 - confirm: User is confirming an action (e.g., "Yes", "Go ahead", "Looks good")

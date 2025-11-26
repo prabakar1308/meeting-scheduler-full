@@ -1,8 +1,8 @@
-import { ChatOpenAI } from "@langchain/openai";
 import { IntentClassification, IntentParser } from "./parsers/intent.parser";
 import { MeetingData, MeetingParser } from "./parsers/meeting.parser";
 import { SchedulingService } from "../scheduling/scheduling.service";
 import { GraphClient } from "../graph/graph.client";
+import { LLMProvider } from "./providers/llm.provider";
 
 import { Injectable, Logger } from "@nestjs/common";
 
@@ -25,7 +25,7 @@ export class ConversationalService {
     private sessions: Map<string, ConversationSession> = new Map();
     private intentParser: IntentParser;
     private meetingParser: MeetingParser;
-    private model: ChatOpenAI;
+    private model: any;
 
     constructor(
         private schedulingService: SchedulingService,
@@ -33,10 +33,9 @@ export class ConversationalService {
     ) {
         this.intentParser = new IntentParser();
         this.meetingParser = new MeetingParser();
-        this.model = new ChatOpenAI({
-            modelName: 'gpt-4o-mini',
-            temperature: 0.7,
-            openAIApiKey: process.env.OPENAI_API_KEY,
+        this.model = LLMProvider.createChatModel({
+            task: 'general',
+            temperature: 0.7
         });
     }
 
@@ -260,6 +259,10 @@ export class ConversationalService {
             case 'cancel':
                 this.clearSession(sessionId);
                 response = `Okay, I've cancelled the scheduling process. Let me know if you need anything else!`;
+                break;
+
+            case 'query_meetings':
+                response = `I can only help you schedule new meetings. To view your existing meetings, please use the **Agent Chat** feature instead. Agent Chat can show you your meetings for today, tomorrow, or any date range you specify.`;
                 break;
 
             default:

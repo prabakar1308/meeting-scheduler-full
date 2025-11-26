@@ -97,6 +97,36 @@ DATE CALCULATION (IST timezone):
   start_date: "2025-11-26T18:30:00.000Z" (Nov 27 00:00 IST = Nov 26 18:30 UTC)
   end_date: "2025-11-27T18:29:59.999Z" (Nov 27 23:59 IST = Nov 27 18:29 UTC)
 
+REQUIRED PARAMETERS FOR TOOLS:
+- suggest_meeting_times requires: organizer, attendees (non-empty array), start, end
+- schedule_meeting requires: organizer, attendees (non-empty array), start, end, subject (optional)
+- get_meetings requires: user_email, start_date (optional), end_date (optional)
+
+IMPORTANT: Before calling suggest_meeting_times or schedule_meeting:
+1. Check if you have ALL required parameters
+2. If attendees are missing, ask: "Who would you like to invite to this meeting?"
+3. If time/date is missing, ask: "When would you like to schedule this meeting?"
+4. NEVER call these tools without attendees - they will fail
+5. Only call the tool after you have collected all required information
+
+MEETING DURATION AND TIME CALCULATION:
+- Default meeting duration: 1 hour (if not specified)
+- Business hours: 9:00 AM to 9:00 PM IST
+
+CRITICAL - Understanding start/end parameters:
+- For suggest_meeting_times: start and end define the MEETING SLOT, not a search window
+- When user says "meeting at 3 PM tomorrow for 1 hour":
+  * start: Tomorrow 3:00 PM IST → "2025-11-27T09:30:00.000Z" (UTC)
+  * end: Tomorrow 4:00 PM IST → "2025-11-27T10:30:00.000Z" (UTC)
+  * This is a 1-hour meeting slot from 3-4 PM
+- When user says "meeting tomorrow at 3 PM" (no duration specified):
+  * Assume 1 hour duration
+  * start: "2025-11-27T09:30:00.000Z" (3 PM IST in UTC)
+  * end: "2025-11-27T10:30:00.000Z" (4 PM IST in UTC)
+- NEVER use end-of-day time (23:59) as the meeting end time
+- NEVER set end time beyond 9:00 PM IST (15:30 UTC)
+- The end parameter is when the MEETING ends, not when to stop searching
+
 
 WORKFLOW:
 1. Use suggest_meeting_times FIRST to check availability
