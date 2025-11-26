@@ -122,6 +122,31 @@ export class GraphClient {
   }
 
   /**
+   * Get calendar events for a user within a date range
+   * Uses calendarView endpoint which automatically expands recurring events
+   */
+  async getEvents(userPrincipalName: string, startDateTime: string, endDateTime: string) {
+    const headers = await this.withAuthHeaders();
+    const url = `/users/${encodeURIComponent(userPrincipalName)}/calendar/calendarView`;
+
+    const params = {
+      startDateTime,
+      endDateTime,
+      $select: 'subject,start,end,organizer,attendees,location,isAllDay,isCancelled',
+      $orderby: 'start/dateTime',
+      $top: 100
+    };
+
+    logger.log(`Fetching events for ${userPrincipalName} from ${startDateTime} to ${endDateTime}`);
+
+    const resp = await this.requestWithRetry(() =>
+      this.client.get(url, { headers, params })
+    );
+
+    return resp.data.value || [];
+  }
+
+  /**
    * Get the authenticated user's email from Microsoft Graph.
    * This uses the app's credentials to determine the default organizer.
    * Falls back to environment variable if Graph call fails.

@@ -17,6 +17,7 @@ export class McpToolAdapter {
         return [
             this.createSuggestMeetingTimesTool(mcpService),
             this.createScheduleMeetingTool(mcpService),
+            this.createGetMeetingsTool(mcpService),
         ];
     }
 
@@ -151,4 +152,54 @@ export class McpToolAdapter {
             },
         });
     }
+
+
+    /**
+     * Tool: Get meetings for a user
+     */
+    private static createGetMeetingsTool(mcpService: McpService): DynamicStructuredTool {
+        return new DynamicStructuredTool({
+            name: 'get_meetings',
+            description: `Retrieve calendar events/meetings for a user within a date range.
+                Use this tool to answer questions about existing meetings, such as:
+                - "What meetings do I have tomorrow?" - use the authenticated user's email
+                - "Show me my meetings this week" - use the authenticated user's email
+                - "List all meetings for user@example.com" - use the specified email
+                
+                IMPORTANT: When user asks about "my meetings" or "I", use their email address from the system context.`,
+            schema: z.object({
+                user_email: z.string().email().describe('Email address of the user whose meetings to retrieve. Use the authenticated user email from system context when user asks about "my meetings".'),
+                start_date: z.string().optional().describe('Start date/time (ISO 8601 datetime in UTC). Defaults to today'),
+                end_date: z.string().optional().describe('End date/time (ISO 8601 datetime in UTC). Defaults to 7 days from start'),
+            }),
+            func: async (input) => {
+                try {
+                    this.logger.log(`[get_meetings] Called with:`, JSON.stringify(input, null, 2));
+
+                    // Validate required parameters
+                    if (!input.user_email) {
+                        throw new Error('Missing required parameter: user_email');
+                    }
+
+                    this.logger.log(`[get_meetings] Validation passed. Fetching meetings...`);
+
+                    const result = await mcpService.executeTool('get_meetings', input);
+
+                    this.logger.log(`[get_meetings] Found ${result?.length || 0} meetings`);
+
+                    return JSON.stringify(result, null, 2);
+                } catch (error: any) {
+                    this.logger.error(`[get_meetings] Error:`, error);
+                    this.logger.error(`[get_meetings] Error stack:`, error.stack);
+                    this.logger.error(`[get_meetings] Input was:`, JSON.stringify(input, null, 2));
+                    return JSON.stringify({
+                        error: error.message,
+                        suggestion: 'Please check the user email and date range parameters.',
+                        receivedInput: input
+                    });
+                }
+            },
+        });
+    }
 }
+

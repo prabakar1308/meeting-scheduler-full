@@ -65,6 +65,48 @@ export class McpService implements OnModuleInit {
             scheduleHandler,
         );
         this.toolHandlers.set('schedule_meeting', scheduleHandler);
+
+
+        // Get meetings tool
+        const getMeetingsSchema = z3.object({
+            user_email: z3.string().email().describe('Email address of the user whose meetings to retrieve'),
+            start_date: z3.string().datetime().optional().describe('Start date/time (ISO 8601). Defaults to today'),
+            end_date: z3.string().datetime().optional().describe('End date/time (ISO 8601). Defaults to 7 days from start'),
+        });
+
+        const getMeetingsHandler = async (args: any) => {
+            // Default to today if no start date provided
+            const startDate = args.start_date || new Date().toISOString();
+
+            // Default to 7 days from start if no end date provided
+            const endDate = args.end_date || new Date(new Date(startDate).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+            console.log(`[get_meetings] Received args:`, args);
+            console.log(`[get_meetings] Using dates - Start: ${startDate}, End: ${endDate}`);
+
+            // Call Graph API via SchedulingService's graph client
+            const result = await this.schedulingService['graph'].getEvents(
+                args.user_email,
+                startDate,
+                endDate
+            );
+
+            console.log(`[get_meetings] Found ${result?.length || 0} events`);
+
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+            };
+        };
+
+        this.server.registerTool(
+            'get_meetings',
+            {
+                description: 'Retrieve calendar events/meetings for a user within a date range. Use this to answer questions about existing meetings.',
+                inputSchema: getMeetingsSchema as any,
+            },
+            getMeetingsHandler,
+        );
+        this.toolHandlers.set('get_meetings', getMeetingsHandler);
     }
 
     async handleSSE(req: Request, res: Response) {
