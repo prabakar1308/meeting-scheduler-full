@@ -87,6 +87,35 @@ export class GraphClient {
     return this.getPaged('/users', { $top: top, $select: 'id,displayName,mail,userPrincipalName' });
   }
 
+  /**
+   * Search for users by display name or email
+   * Requires 'ConsistencyLevel: eventual' header for advanced queries
+   */
+  async searchUsers(query: string) {
+    const headers: Record<string, string> = await this.withAuthHeaders();
+    // Add ConsistencyLevel header for search
+    headers['ConsistencyLevel'] = 'eventual';
+
+    const searchUrl = '/users';
+    const params = {
+      '$search': `"displayName:${query}" OR "mail:${query}"`,
+      '$select': 'id,displayName,mail,userPrincipalName',
+      '$top': 10
+    };
+
+    logger.log(`Searching users with query: ${query}`);
+
+    try {
+      const resp = await this.requestWithRetry(() =>
+        this.client.get(searchUrl, { headers, params })
+      );
+      return resp.data.value || [];
+    } catch (error) {
+      logger.error(`Failed to search users: ${error}`);
+      return [];
+    }
+  }
+
   async findMeetingTimes(organizerUPN: string, attendees: any[], options: any) {
     const headers = await this.withAuthHeaders();
     const resp = await this.requestWithRetry(() => this.client.post(`/users/${encodeURIComponent(organizerUPN)}/findMeetingTimes`, options, { headers }));

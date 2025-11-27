@@ -35,32 +35,46 @@ export class SchedulingService {
 
   /**
    * Determine if an email belongs to an internal user (same organization)
-   * You can customize this logic based on your organization's domain(s)
+   * Checks domain match first, then verifies against Graph API
    */
-  private isInternalUser(email: string, organizerEmail: string): boolean {
-    // Extract domain from organizer email
+  private async isInternalUser(email: string, organizerEmail: string): Promise<boolean> {
+    if (!email.includes('@')) return false;
+
+    // 1. Fast check: Extract domain from organizer email
     const organizerDomain = organizerEmail.split('@')[1];
     const userDomain = email.split('@')[1];
 
-    // Check if domains match
-    return userDomain === organizerDomain;
+    if (userDomain === organizerDomain) {
+      return true;
+    }
+
+    // 2. Slow check: Verify if user exists in the tenant using Graph API
+    try {
+      await this.graph.getUserById(email);
+      return true;
+    } catch (error) {
+      // User not found in tenant
+      return false;
+    }
   }
 
   /**
    * Separate attendees into internal and external users
    */
-  private categorizeAttendees(attendees: any[], organizerEmail: string) {
+  private async categorizeAttendees(attendees: any[], organizerEmail: string) {
     const internal: any[] = [];
     const external: any[] = [];
 
-    attendees.forEach(attendee => {
+    for (const attendee of attendees) {
       const email = attendee.emailAddress?.address || attendee;
-      if (this.isInternalUser(email, organizerEmail)) {
+      const isInternal = await this.isInternalUser(email, organizerEmail);
+
+      if (isInternal) {
         internal.push(attendee);
       } else {
         external.push(attendee);
       }
-    });
+    }
 
     return { internal, external };
   }
@@ -88,45 +102,49 @@ export class SchedulingService {
 
     // Validate that start and end times are in the future (timestamp-specific validation)
     // Using IST timezone: 10:00 AM to 9:00 PM (Asia/Kolkata)
-    // IST is UTC+5:30, so:
-    // 10:00 AM IST = 04:30 UTC
-    // 9:00 PM IST = 15:30 UTC
     const now = new Date();
     const startDate = new Date(start);
     const endDate = new Date(end);
 
-    // Extract date part from start to check if it's today
-    const today = new Date().toISOString().split('T')[0];
-    let startDateOnly = start.split('T')[0];
-
-    // Smart time logic:
-    // - If startDate is today, validate against current time
-    // - If startDate is in the future, validate against 10:00 AM IST
-    let effectiveStartTime: Date;
-    if (startDateOnly === today) {
-      // For today, use current time
-      effectiveStartTime = now;
-    } else {
-      // For future dates, use 10:00 AM IST (04:30 UTC)
-      effectiveStartTime = new Date(`${startDateOnly}T04:30:00Z`);
+    if (startDate < now) {
+      throw new Error(`Meeting start time must be in the future`);
     }
 
-    // Validate that start is not before effective start time
-    if (startDate < effectiveStartTime) {
-      throw new Error(`Meeting start time must be at or after ${effectiveStartTime.toISOString()}`);
+    // Helper to get IST hour and minute
+    const getISTTime = (date: Date) => {
+      // IST is UTC + 5:30
+      const istOffset = 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(date.getTime() + istOffset);
+      return {
+        hours: istDate.getUTCHours(),
+        minutes: istDate.getUTCMinutes(),
+        fullDate: istDate
+      };
+    };
+
+    const startIST = getISTTime(startDate);
+    const endIST = getISTTime(endDate);
+
+    // Business hours: 10:00 AM to 9:00 PM IST
+    // Start time check: Must be >= 10:00
+    if (startIST.hours < 10) {
+      throw new Error(`Meeting start time must be at or after 10:00 AM IST (04:30 UTC). Requested: ${startIST.hours}:${startIST.minutes.toString().padStart(2, '0')} IST (${startDate.toISOString()})`);
     }
 
-    // Validate that end is not after 9:00 PM IST (15:30 UTC)
-    const endDateOnly = end.split('T')[0];
-    const maxEndTime = new Date(`${endDateOnly}T15:30:00Z`);
-    if (endDate > maxEndTime) {
-      throw new Error(`Meeting end time must be at or before 9:00 PM IST`);
+    // End time check: Must be <= 21:00 (9:00 PM)
+    // If hours > 21, OR (hours == 21 AND minutes > 0)
+    if (endIST.hours > 21 || (endIST.hours === 21 && endIST.minutes > 0)) {
+      throw new Error(`Meeting end time must be at or before 9:00 PM IST (15:30 UTC). Requested: ${endIST.hours}:${endIST.minutes.toString().padStart(2, '0')} IST (${endDate.toISOString()})`);
+    }
+
+    if (endDate <= startDate) {
+      throw new Error('End time must be after start time');
     }
 
     await this.userSync.ensureUserInPrisma(this.prisma, organizer);
 
     // Separate internal and external attendees
-    const { internal, external } = this.categorizeAttendees(attendees, organizer);
+    const { internal, external } = await this.categorizeAttendees(attendees, organizer);
 
     logger.log(`Internal attendees: ${internal.length}, External attendees: ${external.length}`);
 
@@ -252,6 +270,13 @@ export class SchedulingService {
     };
   }
 
+  /**
+   * Search for users by name or email
+   */
+  async searchUsers(query: string) {
+    return this.graph.searchUsers(query);
+  }
+
   async scheduleMeeting(dto: any) {
     // Use organizer from request, or fetch from Microsoft Graph API as fallback
     // If not provided, fetch from Microsoft Graph API as fallback
@@ -270,7 +295,7 @@ export class SchedulingService {
     await this.userSync.ensureUserInPrisma(this.prisma, organizer);
 
     // Separate internal and external attendees
-    const { internal, external } = this.categorizeAttendees(attendees, organizer);
+    const { internal, external } = await this.categorizeAttendees(attendees, organizer);
 
     logger.log(`Internal attendees: ${internal.length}, External attendees: ${external.length}`);
 
@@ -366,41 +391,17 @@ export class SchedulingService {
 
         scheduleResponse.value?.forEach((schedule: any) => {
           const email = schedule.scheduleId;
-
-          logger.log(`\n👤 Checking availability for: ${email}`);
-          logger.log(`   Total schedule items: ${schedule.scheduleItems?.length || 0}`);
-
-          // Check if any schedule item overlaps with the requested time slot
           const isBusy = schedule.scheduleItems?.some((item: any) => {
-            logger.log(`   📅 Item: ${item.start.dateTime} - ${item.end.dateTime} (${item.status})`);
-
             if (item.status !== 'busy' && item.status !== 'tentative') {
-              logger.log(`      ✓ Skipping (status: ${item.status})`);
               return false;
             }
-
-            // Check for time overlap
-            // Ensure we're working with UTC times
+            // Check for overlap with requested time
             const itemStart = new Date(item.start.dateTime + (item.start.dateTime.endsWith('Z') ? '' : 'Z'));
             const itemEnd = new Date(item.end.dateTime + (item.end.dateTime.endsWith('Z') ? '' : 'Z'));
-
-            logger.log(`      Item Start (UTC): ${itemStart.toISOString()}`);
-            logger.log(`      Item End (UTC):   ${itemEnd.toISOString()}`);
-            logger.log(`      Requested Start:  ${requestedStart.toISOString()}`);
-            logger.log(`      Requested End:    ${requestedEnd.toISOString()}`);
-
-            // Two time ranges overlap if: start1 < end2 AND start2 < end1
-            const overlaps = requestedStart < itemEnd && itemStart < requestedEnd;
-
-            logger.log(`      Overlap check: ${requestedStart.toISOString()} < ${itemEnd.toISOString()} = ${requestedStart < itemEnd}`);
-            logger.log(`                     ${itemStart.toISOString()} < ${requestedEnd.toISOString()} = ${itemStart < requestedEnd}`);
-            logger.log(`      Result: ${overlaps ? '⚠️ CONFLICT!' : '✓ No conflict'}`);
-
-            return overlaps;
+            return startTime < itemEnd && itemStart < endTime;
           });
 
           availabilityStatus[email] = isBusy ? 'busy' : 'free';
-          logger.log(`\n   Final status for ${email}: ${isBusy ? '✗ BUSY' : '✓ FREE'}`);
           if (isBusy) isSlotBusy = true;
         });
 
@@ -446,8 +447,6 @@ export class SchedulingService {
             });
 
             logger.log(`📊 Graph API returned ${findRes.meetingTimeSuggestions?.length || 0} suggestions`);
-
-            // logger.log(findRes.meetingTimeSuggestions);
 
             // Filter out slots that are in the past and outside business hours
             const now = new Date();
@@ -670,7 +669,7 @@ Return ONLY a JSON object with these fields. If duration is specified but not en
       const attendeeObjects = parsed.attendees.map((email: string) => ({
         emailAddress: { address: email }
       }));
-      const { internal, external } = this.categorizeAttendees(attendeeObjects, organizer);
+      const { internal, external } = await this.categorizeAttendees(attendeeObjects, organizer);
 
       // Check availability for internal users
       const { isSlotBusy, availabilityStatus, alternativeSlots } = await this.checkAvailability(

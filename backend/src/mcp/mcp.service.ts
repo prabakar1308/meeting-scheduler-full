@@ -49,7 +49,7 @@ export class McpService implements OnModuleInit {
         this.server.registerTool(
             'suggest_meeting_times',
             {
-                description: 'Suggest meeting times based on availability',
+                description: 'Suggest meeting times based on availability. Business Hours: 10:00 AM - 9:00 PM IST (04:30 UTC - 15:30 UTC). Please convert all times to UTC within this range before calling.',
                 inputSchema: meetingParamsSchema as any,
             },
             suggestHandler,
@@ -59,7 +59,7 @@ export class McpService implements OnModuleInit {
         this.server.registerTool(
             'schedule_meeting',
             {
-                description: 'Schedule a meeting with the best available slot',
+                description: 'Schedule a meeting with the best available slot. Business Hours: 10:00 AM - 9:00 PM IST (04:30 UTC - 15:30 UTC). Please convert all times to UTC within this range before calling.',
                 inputSchema: meetingParamsSchema as any,
             },
             scheduleHandler,
@@ -107,6 +107,28 @@ export class McpService implements OnModuleInit {
             getMeetingsHandler,
         );
         this.toolHandlers.set('get_meetings', getMeetingsHandler);
+
+        // Search users tool
+        const searchUsersSchema = z3.object({
+            query: z3.string().describe('Name or email to search for'),
+        });
+
+        const searchUsersHandler = async (args: any) => {
+            const result = await this.schedulingService.searchUsers(args.query);
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+            };
+        };
+
+        this.server.registerTool(
+            'search_users',
+            {
+                description: 'Search for internal users by name or email. Use this to find email addresses when user provides names.',
+                inputSchema: searchUsersSchema as any,
+            },
+            searchUsersHandler,
+        );
+        this.toolHandlers.set('search_users', searchUsersHandler);
     }
 
     async handleSSE(req: Request, res: Response) {
