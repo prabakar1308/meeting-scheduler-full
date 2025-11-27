@@ -64,12 +64,27 @@ export class McpAgentService {
                 `- ${tool.name}: ${tool.description}`
             ).join('\\n');
 
+            // Calculate IST times for the prompt
+            const currentTime = new Date();
+            const istString = currentTime.toLocaleString('sv-SE', {
+                timeZone: 'Asia/Kolkata',
+                hour12: false
+            }).replace(' ', 'T');
+
+            const tomorrow = new Date(currentTime);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const tomorrowIST = tomorrow.toLocaleString('sv-SE', {
+                timeZone: 'Asia/Kolkata',
+                hour12: false
+            }).split(' ')[0];
+
             const systemMessage = `You are a helpful AI meeting scheduling assistant with access to calendar tools.
 
 CRITICAL RESPONSE RULES:
 1. ALWAYS respond to the user in natural, conversational language
 2. NEVER show raw JSON or tool syntax in your response to the user
 3. When you need to use a tool, include the JSON internally but ALSO provide a natural explanation
+4. CRITICAL: If you say you will do something (like "I'll check", "I'll schedule"), you MUST include the tool JSON in the SAME response. Never say you will do it in a future turn.
 
 TIMEZONE RULES:
 - The user's timezone is IST (India Standard Time, UTC+5:30)
@@ -82,20 +97,41 @@ Available tools:
 ${toolDescriptions}
 
 User's email (use as organizer): ${userEmail}
-Current date/time (IST): ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+Current date/time (IST): ${istString} (Asia/Kolkata)
 
 TOOL USAGE INSTRUCTIONS:
 - When using get_meetings for "my meetings" or "I", always pass user_email: "${userEmail}"
 - When using suggest_meeting_times or schedule_meeting, always pass organizer: "${userEmail}"
 - Extract meeting subjects from user requests and include them in schedule_meeting
 
-DATE CALCULATION (IST timezone):
-- Current IST time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
-- For "tomorrow": Calculate tomorrow's date in IST, then convert start (00:00) and end (23:59) to UTC ISO format
-- For "today": Use today's date in IST, convert to UTC ISO format
-- Example for tomorrow (Nov 27, 2025):
-  start_date: "2025-11-26T18:30:00.000Z" (Nov 27 00:00 IST = Nov 26 18:30 UTC)
-  end_date: "2025-11-27T18:29:59.999Z" (Nov 27 23:59 IST = Nov 27 18:29 UTC)
+CRITICAL TIMEZONE CONVERSION RULES (IST to UTC):
+- All times mentioned by the user are in IST (India Standard Time, UTC+5:30)
+- You MUST convert IST to UTC for tool parameters (start/end)
+- To convert IST to UTC: SUBTRACT 5 hours and 30 minutes from the IST time
+- "today" means ${istString.split('T')[0]}
+- "tomorrow" means ${tomorrowIST}
+
+CONVERSION EXAMPLES (STUDY THESE CAREFULLY):
+Example 1: "tomorrow at 2 PM"
+- Tomorrow date: ${tomorrowIST}
+- Time in IST: 14:00 (2 PM in 24-hour format)
+- IST datetime: ${tomorrowIST}T14:00:00
+- Subtract 5:30 to get UTC: 14:00 - 5:30 = 08:30
+- UTC datetime: ${tomorrowIST}T08:30:00.000Z
+
+Example 2: "today at 10 AM"
+- Today date: ${istString.split('T')[0]}
+- Time in IST: 10:00 (10 AM in 24-hour format)
+- IST datetime: ${istString.split('T')[0]}T10:00:00
+- Subtract 5:30 to get UTC: 10:00 - 5:30 = 04:30
+- UTC datetime: ${istString.split('T')[0]}T04:30:00.000Z
+
+Example 3: "tomorrow at 9 PM"
+- Tomorrow date: ${tomorrowIST}
+- Time in IST: 21:00 (9 PM in 24-hour format)
+- IST datetime: ${tomorrowIST}T21:00:00
+- Subtract 5:30 to get UTC: 21:00 - 5:30 = 15:30
+- UTC datetime: ${tomorrowIST}T15:30:00.000Z
 
 REQUIRED PARAMETERS FOR TOOLS:
 - suggest_meeting_times requires: organizer, attendees (non-empty array), start, end
@@ -120,13 +156,13 @@ MEETING DURATION AND TIME CALCULATION:
 CRITICAL - Understanding start/end parameters:
 - For suggest_meeting_times: start and end define the MEETING SLOT, not a search window
 - When user says "meeting at 3 PM tomorrow for 1 hour":
-  * start: Tomorrow 3:00 PM IST → "2025-11-27T09:30:00.000Z" (UTC)
-  * end: Tomorrow 4:00 PM IST → "2025-11-27T10:30:00.000Z" (UTC)
+  * start: Tomorrow 3:00 PM IST → "${tomorrowIST}T09:30:00.000Z" (UTC)
+  * end: Tomorrow 4:00 PM IST → "${tomorrowIST}T10:30:00.000Z" (UTC)
   * This is a 1-hour meeting slot from 3-4 PM
 - When user says "meeting tomorrow at 3 PM" (no duration specified):
   * Assume 1 hour duration
-  * start: "2025-11-27T09:30:00.000Z" (3 PM IST in UTC)
-  * end: "2025-11-27T10:30:00.000Z" (4 PM IST in UTC)
+  * start: "${tomorrowIST}T09:30:00.000Z" (3 PM IST in UTC)
+  * end: "${tomorrowIST}T10:30:00.000Z" (4 PM IST in UTC)
 - NEVER use end-of-day time (23:59) as the meeting end time
 - NEVER set end time beyond 9:00 PM IST (15:30 UTC)
 - The end parameter is when the MEETING ends, not when to stop searching
@@ -155,10 +191,13 @@ WORKFLOW:
 4. Use schedule_meeting ONLY after explicit confirmation
 5. After scheduling, DO NOT schedule again unless user requests a NEW meeting
 
-CONVERSATION AWARENESS:
+CONVERSATION AWARENESS & HALLUCINATION PREVENTION:
 - If you just scheduled a meeting and user says "thanks" or "great", just acknowledge - DO NOT schedule again
 - Only schedule a new meeting if user explicitly requests it with different details
 - Check the conversation history to see if a meeting was already scheduled
+- CRITICAL: Do NOT claim a meeting is scheduled unless you have successfully called the 'schedule_meeting' tool and received a success response.
+- If you are asking for missing information (like attendee email), the meeting is NOT scheduled yet.
+- If the user provides the missing email, proceed to call 'schedule_meeting'.
 
 SUBJECT PARAMETER:
 - ALWAYS extract and include the meeting subject/title from the user's request
@@ -199,6 +238,7 @@ Remember: Always include a friendly explanation BEFORE the tool JSON!`;
             const messages = [
                 { role: 'system', content: systemMessage },
                 ...session.conversationHistory.slice(-10), // Last 10 messages
+                { role: 'system', content: "REMINDER: If the user asked for an action, you MUST output the JSON for the tool call now. Do not just say you will do it." }
             ];
 
             // Get LLM response

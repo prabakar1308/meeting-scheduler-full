@@ -598,11 +598,27 @@ export class SchedulingService {
 
     try {
       const currentTime = new Date();
-      const istTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      // Get current time in IST as ISO-like string (YYYY-MM-DDTHH:mm:ss format)
+      // sv-SE locale provides this format, and we specify Asia/Kolkata timezone
+      const istString = currentTime.toLocaleString('sv-SE', {
+        timeZone: 'Asia/Kolkata',
+        hour12: false
+      }).replace(' ', 'T');
+
+      console.log('Current UTC:', currentTime, currentTime.toISOString());
+      console.log('Current IST string:', istString);
+
+      // Calculate tomorrow's date in IST
+      const tomorrow = new Date(currentTime);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowIST = tomorrow.toLocaleString('sv-SE', {
+        timeZone: 'Asia/Kolkata',
+        hour12: false
+      }).split(' ')[0];
 
       const systemPrompt = `You are a meeting scheduler assistant. Parse the user's natural language input and extract meeting details.
-Current date and time in IST: ${istTime.toISOString()}
-Current date: ${istTime.toISOString().split('T')[0]}
+Current date and time in IST: ${istString} (Asia/Kolkata timezone, UTC+5:30)
+Current date: ${istString.split('T')[0]}
 
 Extract the following information:
 1. subject: Meeting title/subject
@@ -611,11 +627,34 @@ Extract the following information:
 4. endTime: ISO 8601 format in UTC
 5. duration: Duration in minutes (if specified)
 
-Important timezone rules:
-- All times mentioned are in IST (India Standard Time, UTC+5:30)
-- Convert IST to UTC for startTime and endTime
-- "today" means ${istTime.toISOString().split('T')[0]}
-- "tomorrow" means ${new Date(istTime.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+CRITICAL TIMEZONE CONVERSION RULES:
+- All times mentioned by the user are in IST (India Standard Time, UTC+5:30)
+- You MUST convert IST to UTC for startTime and endTime
+- To convert IST to UTC: SUBTRACT 5 hours and 30 minutes from the IST time
+- "today" means ${istString.split('T')[0]}
+- "tomorrow" means ${tomorrowIST}
+
+CONVERSION EXAMPLES (STUDY THESE CAREFULLY):
+Example 1: "tomorrow at 2 PM"
+- Tomorrow date: ${tomorrowIST}
+- Time in IST: 14:00 (2 PM in 24-hour format)
+- IST datetime: ${tomorrowIST}T14:00:00
+- Subtract 5:30 to get UTC: 14:00 - 5:30 = 08:30
+- UTC datetime: ${tomorrowIST}T08:30:00.000Z
+
+Example 2: "today at 10 AM"
+- Today date: ${istString.split('T')[0]}
+- Time in IST: 10:00 (10 AM in 24-hour format)
+- IST datetime: ${istString.split('T')[0]}T10:00:00
+- Subtract 5:30 to get UTC: 10:00 - 5:30 = 04:30
+- UTC datetime: ${istString.split('T')[0]}T04:30:00.000Z
+
+Example 3: "tomorrow at 9 PM"
+- Tomorrow date: ${tomorrowIST}
+- Time in IST: 21:00 (9 PM in 24-hour format)
+- IST datetime: ${tomorrowIST}T21:00:00
+- Subtract 5:30 to get UTC: 21:00 - 5:30 = 15:30
+- UTC datetime: ${tomorrowIST}T15:30:00.000Z
 
 Return ONLY a JSON object with these fields. If duration is specified but not end time, calculate endTime. If end time is specified but not duration, calculate duration.`;
 

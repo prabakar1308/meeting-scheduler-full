@@ -39,11 +39,16 @@ export class LLMProvider {
      * Create Groq model (FREE, FAST)
      */
     private static createGroqModel(task: string, temperature: number) {
+        const model = 'openai/gpt-oss-120b';
         const modelMap: Record<string, string> = {
-            intent: 'llama-3.3-70b-versatile',      // Fast and accurate for classification
-            extraction: 'llama-3.3-70b-versatile',  // Accurate for entity extraction
-            agent: 'llama-3.3-70b-versatile',       // Best for conversation
-            general: 'llama-3.3-70b-versatile'      // Default to best model
+            // intent: 'llama-3.3-70b-versatile',      // Fast and accurate for classification
+            // extraction: 'llama-3.3-70b-versatile',  // Accurate for entity extraction
+            // agent: 'llama-3.3-70b-versatile',       // Best for conversation
+            // general: 'llama-3.3-70b-versatile'      // Default to best model
+            intent: model,      // Fast and accurate for classification
+            extraction: model,  // Accurate for entity extraction
+            agent: model,       // Best for conversation
+            general: model      // Default to best model
         };
 
         return new ChatGroq({
