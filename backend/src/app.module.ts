@@ -7,8 +7,9 @@ import { AgentModule } from './agent/agent.module';
 import { LangchainModule } from './langchain/langchain.module';
 
 import { McpModule } from './mcp/mcp.module';
+import { TeamsModule } from './teams/teams.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, GraphModule, AgentModule, SchedulingModule, LangchainModule, McpModule],
+  imports: [PrismaModule, AuthModule, GraphModule, AgentModule, SchedulingModule, LangchainModule, McpModule, TeamsModule],
 })
 export class AppModule { }

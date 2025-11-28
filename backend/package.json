@@ -23,6 +23,8 @@
     "@nestjs/platform-express": "^11.1.9",
     "@prisma/client": "5.22.0",
     "axios": "^1.13.2",
+    "botbuilder": "^4.23.3",
+    "botframework-connector": "^4.23.3",
     "dotenv": "^17.2.3",
     "eventsource": "^4.1.0",
     "express-session": "^1.18.2",

@@ -1,0 +1,55 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.16",
+    "version": "1.0.0",
+    "id": "{{TEAMS_APP_ID}}",
+    "packageName": "com.meetingscheduler.app",
+    "developer": {
+        "name": "Meeting Scheduler",
+        "websiteUrl": "https://{{FRONTEND_DOMAIN}}",
+        "privacyUrl": "https://{{FRONTEND_DOMAIN}}/privacy",
+        "termsOfUseUrl": "https://{{FRONTEND_DOMAIN}}/terms"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "Meeting Scheduler",
+        "full": "AI Meeting Scheduler Agent"
+    },
+    "description": {
+        "short": "Schedule meetings with AI",
+        "full": "An intelligent agent that helps you schedule meetings and manage your calendar directly from Teams."
+    },
+    "accentColor": "#FFFFFF",
+    "staticTabs": [
+        {
+            "entityId": "home",
+            "name": "Home",
+            "contentUrl": "https://{{FRONTEND_DOMAIN}}",
+            "websiteUrl": "https://{{FRONTEND_DOMAIN}}",
+            "scopes": [
+                "personal"
+            ]
+        }
+    ],
+    "bots": [
+        {
+            "botId": "{{BOT_ID}}",
+            "scopes": [
+                "personal"
+            ],
+            "isNotificationOnly": false,
+            "supportsFiles": false
+        }
+    ],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": [
+        "{{FRONTEND_DOMAIN}}",
+        "{{BACKEND_DOMAIN}}"
+    ]
+}

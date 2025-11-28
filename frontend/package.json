@@ -7,6 +7,7 @@
   "dependencies": {
     "@azure/msal-browser": "^4.26.2",
     "@azure/msal-react": "^3.0.22",
+    "@microsoft/teams-js": "^2.47.0",
     "axios": "^1.13.2",
     "date-fns": "^4.1.0",
     "next": "14.0.0",

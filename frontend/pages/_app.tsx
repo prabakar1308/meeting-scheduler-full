@@ -37,12 +37,18 @@ function AuthTokenManager({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
 }
 
+import { TeamsProvider } from '../components/TeamsProvider';
+
+// ... (imports)
+
 export default function App({ Component, pageProps }: AppProps) {
     return (
         <MsalProvider instance={msalInstance}>
-            <AuthTokenManager>
-                <Component {...pageProps} />
-            </AuthTokenManager>
+            <TeamsProvider>
+                <AuthTokenManager>
+                    <Component {...pageProps} />
+                </AuthTokenManager>
+            </TeamsProvider>
         </MsalProvider>
     );
 }
